@@ -3,7 +3,6 @@ module LangUnparser exposing
     bumpCol, incCol)
 
 import Lang exposing (..)
-import OurParser2 exposing (Pos, WithPos, WithInfo, startPos)
 import Utils
 import Config
 
