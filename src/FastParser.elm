@@ -274,41 +274,53 @@ conditional =
 -- Lists
 --------------------------------------------------------------------------------
 
-listLiteral : Parser Exp
-listLiteral =
+listLiteral : Parser Exp -> Parser Exp
+listLiteral elemParser =
   inContext "list literal" <|
     try <|
       succeed (\heads -> EList heads Nothing)
         |. symbol "["
-        |= repeat zeroOrMore exp
+        |= repeat zeroOrMore elemParser
         |. spaces
         |. symbol "]"
 
-multiCons : Parser Exp
-multiCons =
+multiCons : Parser Exp -> Parser Exp
+multiCons elemParser =
   inContext "multi cons literal" <|
     delayedCommitMap
       (\heads tail -> EList heads (Just tail))
       ( succeed identity
           |. symbol "["
-          |= repeat oneOrMore exp
+          |= repeat oneOrMore elemParser
           |. spaces
           |. symbol "|"
       )
       ( succeed identity
-          |= exp
+          |= elemParser
           |. spaces
           |. symbol "]"
       )
 
-list : Parser Exp
-list =
+list : Parser Exp -> Parser Exp
+list elemParser =
   inContext "list" <|
     lazy <| \_ ->
       oneOf
-        [ listLiteral
-        , multiCons
+        [ listLiteral elemParser
+        , multiCons elemParser
         ]
+
+--------------------------------------------------------------------------------
+-- Patterns
+--------------------------------------------------------------------------------
+
+pattern : Parser Exp
+pattern =
+  inContext "pattern" <|
+    oneOf
+      [ constant
+      , lazy (\_ -> list pattern)
+      ]
 
 --------------------------------------------------------------------------------
 -- General Expression
@@ -322,7 +334,7 @@ exp =
         [ constant
         , lazy (\_ -> operator)
         , lazy (\_ -> conditional)
-        , lazy (\_ -> list)
+        , lazy (\_ -> list exp)
         ]
 
 --------------------------------------------------------------------------------
