@@ -5,6 +5,14 @@ import Parser.LanguageKit exposing (..)
 import Debug
 
 --------------------------------------------------------------------------------
+-- Parser Combinators
+--------------------------------------------------------------------------------
+
+try : Parser a -> Parser a
+try parser =
+  delayedCommitMap always parser (succeed ())
+
+--------------------------------------------------------------------------------
 -- Data Types
 --------------------------------------------------------------------------------
 
@@ -45,6 +53,8 @@ type Exp
   | EOp1 Op1 Exp
   | EOp2 Op2 Exp Exp
   | EIf Exp Exp Exp
+  -- heads / tail
+  | EList (List Exp) (Maybe Exp)
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -248,21 +258,57 @@ operator =
 conditional : Parser Exp
 conditional =
   inContext "conditional" <|
-    delayedCommit
-      ( succeed identity
-          |= symbol "("
+    delayedCommit (symbol "(") <|
+      lazy <| \_ ->
+        succeed EIf
           |. keyword "if"
+          |. spaces1
+          |= exp
+          |. spaces1
+          |= exp
+          |. spaces1
+          |= exp
+          |. symbol ")"
+
+--------------------------------------------------------------------------------
+-- Lists
+--------------------------------------------------------------------------------
+
+listLiteral : Parser Exp
+listLiteral =
+  inContext "list literal" <|
+    try <|
+      succeed (\heads -> EList heads Nothing)
+        |. symbol "["
+        |= repeat zeroOrMore exp
+        |. spaces
+        |. symbol "]"
+
+multiCons : Parser Exp
+multiCons =
+  inContext "multi cons literal" <|
+    delayedCommitMap
+      (\heads tail -> EList heads (Just tail))
+      ( succeed identity
+          |. symbol "["
+          |= repeat oneOrMore exp
+          |. spaces
+          |. symbol "|"
       )
-      ( lazy <| \_ ->
-          succeed EIf
-            |. spaces1
-            |= exp
-            |. spaces1
-            |= exp
-            |. spaces1
-            |= exp
-            |. symbol ")"
+      ( succeed identity
+          |= exp
+          |. spaces
+          |. symbol "]"
       )
+
+list : Parser Exp
+list =
+  inContext "list" <|
+    lazy <| \_ ->
+      oneOf
+        [ listLiteral
+        , multiCons
+        ]
 
 --------------------------------------------------------------------------------
 -- General Expression
@@ -271,17 +317,19 @@ conditional =
 exp : Parser Exp
 exp =
   inContext "expression" <|
-    oneOf
-      [ constant
-      , lazy (\_ -> operator)
-      , lazy (\_ -> conditional)
-      ]
+    delayedCommit spaces <|
+      oneOf
+        [ constant
+        , lazy (\_ -> operator)
+        , lazy (\_ -> conditional)
+        , lazy (\_ -> list)
+        ]
 
 --------------------------------------------------------------------------------
 -- Tester
 --------------------------------------------------------------------------------
 
-testProgram = "(if (= 1 2) (cos (pi)) (explode 'hi'))"
+testProgram = "[ (if (= (+ 2 4) (* 2 3)) 2 3) 2 3    4  \n 5 6 | 7]"
 
 test _ = Debug.log (toString (parse testProgram)) 0
 
