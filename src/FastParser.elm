@@ -44,6 +44,7 @@ type Exp
   | EOp0 Op0
   | EOp1 Op1 Exp
   | EOp2 Op2 Exp Exp
+  | EIf Exp Exp Exp
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -67,7 +68,8 @@ spaces =
 
 spaces1 : Parser ()
 spaces1 =
-  space
+  succeed identity
+    |= space
     |. spaces
 
 --------------------------------------------------------------------------------
@@ -92,38 +94,42 @@ number : Parser Exp
 number =
   let
     frozenAnnotation =
-      oneOf
-        [ succeed Frozen
-            |. symbol "!"
-        , succeed Thawed
-            |. symbol "?"
-        , succeed Restricted
-            |. symbol "~"
-        , succeed Thawed -- default
-        ]
+      inContext "frozen annotation" <|
+        oneOf
+          [ succeed Frozen
+              |. symbol "!"
+          , succeed Thawed
+              |. symbol "?"
+          , succeed Restricted
+              |. symbol "~"
+          , succeed Thawed -- default
+          ]
     rangeAnnotation =
-      oneOf
-        [ map Just <|
-            succeed Range
-              |. symbol "{"
-              |= numParser
-              |. symbol "-"
-              |= numParser
-              |. symbol "}"
-        , succeed Nothing
-        ]
+      inContext "range annotation" <|
+        oneOf
+          [ map Just <|
+              succeed Range
+                |. symbol "{"
+                |= numParser
+                |. symbol "-"
+                |= numParser
+                |. symbol "}"
+          , succeed Nothing
+          ]
   in
-    succeed (\val frozen range -> ENumber frozen range val)
-      |= numParser
-      |= frozenAnnotation
-      |= rangeAnnotation
+    inContext "number" <|
+      succeed (\val frozen range -> ENumber frozen range val)
+        |= numParser
+        |= frozenAnnotation
+        |= rangeAnnotation
 
 string : Parser Exp
 string =
-  succeed EString
-    |. symbol "'"
-    |= keep zeroOrMore (\c -> c /= '\'')
-    |. symbol "'"
+  inContext "string" <|
+    succeed EString
+      |. symbol "'"
+      |= keep zeroOrMore (\c -> c /= '\'')
+      |. symbol "'"
 
 bool : Parser Exp
 bool =
@@ -148,8 +154,9 @@ constant =
 
 op0 : Parser Exp
 op0 =
-  succeed (EOp0 Pi)
-    |. keyword "pi"
+  inContext "nullary operator" <|
+    succeed (EOp0 Pi)
+      |. keyword "pi"
 
 op1 : Parser Exp
 op1 =
@@ -178,10 +185,11 @@ op1 =
           |. keyword "explode"
         ]
   in
-    succeed EOp1
-      |= op
-      |. spaces1
-      |= exp
+    inContext "unary operator" <|
+      succeed EOp1
+        |= op
+        |. spaces1
+        |= exp
 
 op2 : Parser Exp
 op2 =
@@ -208,27 +216,53 @@ op2 =
           |. keyword "arctan2"
         ]
   in
-    succeed EOp2
-      |= op
-      |. spaces1
-      |= exp
-      |. spaces1
-      |= exp
+    inContext "binary operator" <|
+      succeed EOp2
+        |= op
+        |. spaces1
+        |= exp
+        |. spaces1
+        |= exp
 
 operator : Parser Exp
-operator = lazy <| \_ ->
-  let
-    inner =
-      oneOf
-        [ op0
-        , op1
-        , op2
-        ]
-  in
-    succeed identity
-      |. symbol "("
-      |= inner
-      |. symbol ")"
+operator =
+  inContext "operator" <|
+    lazy <| \_ ->
+      let
+        inner =
+          oneOf
+            [ op0
+            , op1
+            , op2
+            ]
+      in
+        delayedCommit (symbol "(") <|
+          succeed identity
+            |= inner
+            |. symbol ")"
+
+--------------------------------------------------------------------------------
+-- Conditionals
+--------------------------------------------------------------------------------
+
+conditional : Parser Exp
+conditional =
+  inContext "conditional" <|
+    delayedCommit
+      ( succeed identity
+          |= symbol "("
+          |. keyword "if"
+      )
+      ( lazy <| \_ ->
+          succeed EIf
+            |. spaces1
+            |= exp
+            |. spaces1
+            |= exp
+            |. spaces1
+            |= exp
+            |. symbol ")"
+      )
 
 --------------------------------------------------------------------------------
 -- General Expression
@@ -236,16 +270,18 @@ operator = lazy <| \_ ->
 
 exp : Parser Exp
 exp =
-  oneOf
-    [ constant
-    , lazy (\_ -> operator)
-    ]
+  inContext "expression" <|
+    oneOf
+      [ constant
+      , lazy (\_ -> operator)
+      , lazy (\_ -> conditional)
+      ]
 
 --------------------------------------------------------------------------------
 -- Tester
 --------------------------------------------------------------------------------
 
-testProgram = "(+ 1 2)"
+testProgram = "(if (= 1 2) (cos (pi)) (explode 'hi'))"
 
 test _ = Debug.log (toString (parse testProgram)) 0
 
