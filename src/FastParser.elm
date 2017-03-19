@@ -1,28 +1,91 @@
 module FastParser exposing (test)
 
 import Parser exposing (..)
+import Parser.LanguageKit exposing (..)
 import Debug
+
+--------------------------------------------------------------------------------
+-- Data Types
+--------------------------------------------------------------------------------
 
 type FrozenState = Frozen | Thawed | Restricted
 type Range = Range Float Float
+
+type Op0
+  = Pi
+
+type Op1
+  = Cos
+  | Sin
+  | Arccos
+  | Arcsin
+  | Floor
+  | Ceiling
+  | Round
+  | ToString
+  | Sqrt
+  | Explode
+
+type Op2
+  = Plus
+  | Minus
+  | Multiply
+  | Divide
+  | LessThan
+  | Equal
+  | Mod
+  | Pow
+  | Arctan2
 
 type Exp
   = ENumber FrozenState (Maybe Range) Float
   | EString String
   | EBool Bool
+  | EOp0 Op0
+  | EOp1 Op1 Exp
+  | EOp2 Op2 Exp Exp
+
+--------------------------------------------------------------------------------
+-- Whitespace
+--------------------------------------------------------------------------------
+
+isSpace : Char -> Bool
+isSpace c =
+  c == ' ' || c == '\n'
+
+space : Parser ()
+space =
+  ignore (Exactly 1) isSpace
+
+spaces : Parser ()
+spaces =
+  whitespace
+    { allowTabs = False
+    , lineComment = LineComment ";"
+    , multiComment = NoMultiComment
+    }
+
+spaces1 : Parser ()
+spaces1 =
+  space
+    |. spaces
+
+--------------------------------------------------------------------------------
+-- Constant Expressions
+--------------------------------------------------------------------------------
 
 numParser : Parser Float
 numParser =
   let
-    negative =
+    sign =
       oneOf
         [ succeed (-1)
             |. symbol "-"
         , succeed 1
         ]
   in
-    succeed (\sign n -> sign * n)
-      |= negative
+    succeed (\s n -> s * n)
+      |= sign
       |= float
 
 number : Parser Exp
@@ -79,8 +142,111 @@ constant =
     , bool
     ]
 
-testProgram = "3.14!{-10.1--3.45}"
+--------------------------------------------------------------------------------
+-- Primitive Operators
+--------------------------------------------------------------------------------
+
+op0 : Parser Exp
+op0 =
+  succeed (EOp0 Pi)
+    |. keyword "pi"
+
+op1 : Parser Exp
+op1 =
+  let
+    op =
+      oneOf
+        [ succeed Cos
+          |. keyword "cos"
+        , succeed Sin
+          |. keyword "sin"
+        , succeed Arccos
+          |. keyword "arccos"
+        , succeed Arcsin
+          |. keyword "arcsin"
+        , succeed Floor
+          |. keyword "floor"
+        , succeed Ceiling
+          |. keyword "ceiling"
+        , succeed Round
+          |. keyword "round"
+        , succeed ToString
+          |. keyword "toString"
+        , succeed Sqrt
+          |. keyword "sqrt"
+        , succeed Explode
+          |. keyword "explode"
+        ]
+  in
+    succeed EOp1
+      |= op
+      |. spaces1
+      |= exp
+
+op2 : Parser Exp
+op2 =
+  let
+    op =
+      oneOf
+        [ succeed Plus
+          |. keyword "+"
+        , succeed Minus
+          |. keyword "-"
+        , succeed Multiply
+          |. keyword "*"
+        , succeed Divide
+          |. keyword "/"
+        , succeed LessThan
+          |. keyword "<"
+        , succeed Equal
+          |. keyword "="
+        , succeed Mod
+          |. keyword "mod"
+        , succeed Pow
+          |. keyword "pow"
+        , succeed Arctan2
+          |. keyword "arctan2"
+        ]
+  in
+    succeed EOp2
+      |= op
+      |. spaces1
+      |= exp
+      |. spaces1
+      |= exp
+
+operator : Parser Exp
+operator = lazy <| \_ ->
+  let
+    inner =
+      oneOf
+        [ op0
+        , op1
+        , op2
+        ]
+  in
+    succeed identity
+      |. symbol "("
+      |= inner
+      |. symbol ")"
+
+--------------------------------------------------------------------------------
+-- General Expression
+--------------------------------------------------------------------------------
+
+exp : Parser Exp
+exp =
+  oneOf
+    [ constant
+    , lazy (\_ -> operator)
+    ]
+
+--------------------------------------------------------------------------------
+-- Tester
+--------------------------------------------------------------------------------
+
+testProgram = "(+ 1 2)"
 
 test _ = Debug.log (toString (parse testProgram)) 0
 
-parse = run constant
+parse = run exp
