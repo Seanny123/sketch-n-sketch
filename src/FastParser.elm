@@ -45,6 +45,10 @@ type Op2
   | Pow
   | Arctan2
 
+type CasePath =
+  -- pattern / value
+  CasePath Exp Exp
+
 type Exp
   = ENumber FrozenState (Maybe Range) Float
   | EString String
@@ -55,6 +59,7 @@ type Exp
   | EIf Exp Exp Exp
   -- heads / tail
   | EList (List Exp) (Maybe Exp)
+  | ECase Exp (List CasePath)
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -83,6 +88,23 @@ spaces1 =
     |. spaces
 
 --------------------------------------------------------------------------------
+-- Block Helper
+--------------------------------------------------------------------------------
+
+openBlock : Parser ()
+openBlock =
+  succeed identity
+    |. spaces
+    |= symbol "("
+    |. spaces
+
+closeBlock : Parser ()
+closeBlock =
+  succeed identity
+    |. spaces
+    |= symbol ")"
+
+--------------------------------------------------------------------------------
 -- Constant Expressions
 --------------------------------------------------------------------------------
 
@@ -96,9 +118,10 @@ numParser =
         , succeed 1
         ]
   in
-    succeed (\s n -> s * n)
-      |= sign
-      |= float
+    delayedCommit spaces <|
+      succeed (\s n -> s * n)
+        |= sign
+        |= float
 
 number : Parser Exp
 number =
@@ -136,19 +159,21 @@ number =
 string : Parser Exp
 string =
   inContext "string" <|
-    succeed EString
-      |. symbol "'"
-      |= keep zeroOrMore (\c -> c /= '\'')
-      |. symbol "'"
+    delayedCommit spaces <|
+      succeed EString
+        |. symbol "'"
+        |= keep zeroOrMore (\c -> c /= '\'')
+        |. symbol "'"
 
 bool : Parser Exp
 bool =
-  oneOf
-    [ succeed (EBool True)
-        |. keyword "true"
-    , succeed (EBool False)
-        |. keyword "false"
-    ]
+  delayedCommit spaces <|
+    oneOf
+      [ succeed (EBool True)
+          |. keyword "true"
+      , succeed (EBool False)
+          |. keyword "false"
+      ]
 
 constant : Parser Exp
 constant =
@@ -165,8 +190,9 @@ constant =
 op0 : Parser Exp
 op0 =
   inContext "nullary operator" <|
-    succeed (EOp0 Pi)
-      |. keyword "pi"
+    delayedCommit spaces <|
+      succeed (EOp0 Pi)
+        |. keyword "pi"
 
 op1 : Parser Exp
 op1 =
@@ -196,10 +222,11 @@ op1 =
         ]
   in
     inContext "unary operator" <|
-      succeed EOp1
-        |= op
-        |. spaces1
-        |= exp
+      delayedCommit spaces <|
+        succeed EOp1
+          |= op
+          |. spaces1
+          |= exp
 
 op2 : Parser Exp
 op2 =
@@ -227,12 +254,13 @@ op2 =
         ]
   in
     inContext "binary operator" <|
-      succeed EOp2
-        |= op
-        |. spaces1
-        |= exp
-        |. spaces1
-        |= exp
+      delayedCommit spaces <|
+        succeed EOp2
+          |= op
+          |. spaces1
+          |= exp
+          |. spaces1
+          |= exp
 
 operator : Parser Exp
 operator =
@@ -246,10 +274,10 @@ operator =
             , op2
             ]
       in
-        delayedCommit (symbol "(") <|
+        delayedCommit openBlock <|
           succeed identity
             |= inner
-            |. symbol ")"
+            |. closeBlock
 
 --------------------------------------------------------------------------------
 -- Conditionals
@@ -258,7 +286,7 @@ operator =
 conditional : Parser Exp
 conditional =
   inContext "conditional" <|
-    delayedCommit (symbol "(") <|
+    delayedCommit openBlock <|
       lazy <| \_ ->
         succeed EIf
           |. keyword "if"
@@ -268,7 +296,7 @@ conditional =
           |= exp
           |. spaces1
           |= exp
-          |. symbol ")"
+          |. closeBlock
 
 --------------------------------------------------------------------------------
 -- Lists
@@ -279,6 +307,7 @@ listLiteral elemParser =
   inContext "list literal" <|
     try <|
       succeed (\heads -> EList heads Nothing)
+        |. spaces
         |. symbol "["
         |= repeat zeroOrMore elemParser
         |. spaces
@@ -290,6 +319,7 @@ multiCons elemParser =
     delayedCommitMap
       (\heads tail -> EList heads (Just tail))
       ( succeed identity
+          |. spaces
           |. symbol "["
           |= repeat oneOrMore elemParser
           |. spaces
@@ -323,25 +353,49 @@ pattern =
       ]
 
 --------------------------------------------------------------------------------
+-- Case Expression
+--------------------------------------------------------------------------------
+
+caseExpression : Parser Exp
+caseExpression =
+  let
+    casePath =
+      inContext "case expression path" <|
+        delayedCommit openBlock <|
+          succeed CasePath
+            |= pattern
+            |. spaces1
+            |= exp
+            |. closeBlock
+  in
+    inContext "case expression" <|
+      delayedCommit openBlock <|
+        succeed ECase
+          |. keyword "case"
+          |= exp
+          |= repeat oneOrMore casePath
+          |. closeBlock
+
+--------------------------------------------------------------------------------
 -- General Expression
 --------------------------------------------------------------------------------
 
 exp : Parser Exp
 exp =
   inContext "expression" <|
-    delayedCommit spaces <|
-      oneOf
-        [ constant
-        , lazy (\_ -> operator)
-        , lazy (\_ -> conditional)
-        , lazy (\_ -> list exp)
-        ]
+    oneOf
+      [ constant
+      , lazy (\_ -> operator)
+      , lazy (\_ -> conditional)
+      , lazy (\_ -> list exp)
+      , lazy (\_ -> caseExpression)
+      ]
 
 --------------------------------------------------------------------------------
 -- Tester
 --------------------------------------------------------------------------------
 
-testProgram = "[ (if (= (+ 2 4) (* 2 3)) 2 3) 2 3    4  \n 5 6 | 7]"
+testProgram = "  (  case (= 1 2) (true 'yes') (false 'no')  ) "
 
 test _ = Debug.log (toString (parse testProgram)) 0
 
