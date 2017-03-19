@@ -3,35 +3,84 @@ module FastParser exposing (test)
 import Parser exposing (..)
 import Debug
 
+type FrozenState = Frozen | Thawed | Restricted
+type Range = Range Float Float
 
---testProgram = "(blobs [])"
-testProgram = " [ 1 , 2 , 3 ] "
+type Exp
+  = ENumber FrozenState (Maybe Range) Float
+  | EString String
+  | EBool Bool
 
-test _ = Debug.log (parse testProgram) 0
+numParser : Parser Float
+numParser =
+  let
+    negative =
+      oneOf
+        [ succeed (-1)
+            |. symbol "-"
+        , succeed 1
+        ]
+  in
+    succeed (\sign n -> sign * n)
+      |= negative
+      |= float
 
-parse = run intList
+number : Parser Exp
+number =
+  let
+    frozenAnnotation =
+      oneOf
+        [ succeed Frozen
+            |. symbol "!"
+        , succeed Thawed
+            |. symbol "?"
+        , succeed Restricted
+            |. symbol "~"
+        , succeed Thawed -- default
+        ]
+    rangeAnnotation =
+      oneOf
+        [ map Just <|
+            succeed Range
+              |. symbol "{"
+              |= numParser
+              |. symbol "-"
+              |= numParser
+              |. symbol "}"
+        , succeed Nothing
+        ]
+  in
+    succeed (\val frozen range -> ENumber frozen range val)
+      |= numParser
+      |= frozenAnnotation
+      |= rangeAnnotation
 
-nextInt : Parser Int
-nextInt =
-  delayedCommit spaces <|
-    succeed identity
-    |. symbol ","
-    |. spaces
-    |= int
+string : Parser Exp
+string =
+  succeed EString
+    |. symbol "'"
+    |= keep zeroOrMore (\c -> c /= '\'')
+    |. symbol "'"
 
-intListHelp : List Int -> Parser (List Int)
-intListHelp revInts =
+bool : Parser Exp
+bool =
   oneOf
-    [ nextInt
-        |> andThen (\n -> intListHelp (n :: revInts))
-    , succeed (List.reverse revInts)
+    [ succeed (EBool True)
+        |. keyword "true"
+    , succeed (EBool False)
+        |. keyword "false"
     ]
 
-intList : Parser (List Int)
-intList =
-  succeed identity
-  |. symbol "["
-  |. spaces
-  |= andThen (\n -> intListHelp [n]) int
-  |. spaces
-  |. symbol "]"
+constant : Parser Exp
+constant =
+  oneOf
+    [ number
+    , string
+    , bool
+    ]
+
+testProgram = "3.14!{-10.1--3.45}"
+
+test _ = Debug.log (toString (parse testProgram)) 0
+
+parse = run constant
