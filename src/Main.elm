@@ -69,12 +69,88 @@ module Main exposing (main)
 
 
 import Html exposing (Html)
+import Html.Attributes exposing (..)
+import Html.Events exposing (..)
 import Task exposing (Task, andThen)
 
+import Parser
 import FastParser
 
-type alias Model = Int
-type alias Msg = Int
+--------------------------------------------------------------------------------
+-- Model
+--------------------------------------------------------------------------------
+
+type alias Model = String
+
+init =
+  ("", Cmd.none)
+
+--------------------------------------------------------------------------------
+-- Update
+--------------------------------------------------------------------------------
+
+type Msg
+  = TextUpdate String
+  | NoUpdate
+
+update msg model =
+  case msg of
+    (TextUpdate s) ->
+      (s, Cmd.none)
+    NoUpdate ->
+      (model, Cmd.none)
+
+--------------------------------------------------------------------------------
+-- View
+--------------------------------------------------------------------------------
+
+displayModel model =
+  let (color, status, body) =
+    case (FastParser.parse model) of
+      (Ok exp) ->
+        ("#008800", "Success", toString exp)
+      (Err err) ->
+        ("#880000", "Error", toString err)
+  in
+    Html.div
+      [ style [ ("color", color) ] ]
+      [ Html.h2 [] [ Html.text <| "Output (" ++ status ++ ")"]
+      , Html.p [] [ Html.text body ]
+      ]
+
+view model =
+  Html.div
+    [ style
+        [ ("padding", "20px")
+        , ("font-family", "monospace")
+        ]
+    ]
+    [ Html.h1 [] [ Html.text "FastParser" ]
+    , Html.h2 [] [ Html.text "Input" ]
+    , Html.textarea
+        [ onInput TextUpdate
+        , cols 80
+        , rows 20
+        ]
+        []
+    , Html.div
+        [ style
+          [ ("margin-top", "20px")
+          ]
+        ]
+        [ displayModel model ]
+    ]
+
+--------------------------------------------------------------------------------
+-- Subscriptions
+--------------------------------------------------------------------------------
+
+subscriptions model =
+  Sub.none
+
+--------------------------------------------------------------------------------
+-- Main
+--------------------------------------------------------------------------------
 
 main : Program Never Model Msg
 main =
@@ -84,12 +160,3 @@ main =
     , update = update
     , subscriptions = subscriptions
     }
-
-init = (0, Task.perform FastParser.test (Task.succeed ()))
-
-view model = Html.text "FastParser"
-
-update msg model = (model, Cmd.none)
-
-subscriptions model = Sub.none
-

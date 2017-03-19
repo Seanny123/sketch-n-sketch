@@ -1,4 +1,4 @@
-module FastParser exposing (test)
+module FastParser exposing (parse)
 
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
@@ -392,11 +392,7 @@ exp =
       ]
 
 --------------------------------------------------------------------------------
--- Tester
+-- Exports
 --------------------------------------------------------------------------------
-
-testProgram = "  (  case (= 1 2) (true 'yes') (false 'no')  ) "
-
-test _ = Debug.log (toString (parse testProgram)) 0
 
 parse = run exp
