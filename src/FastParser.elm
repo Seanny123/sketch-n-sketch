@@ -20,6 +20,31 @@ try : Parser a -> Parser a
 try parser =
   delayedCommitMap always parser (succeed ())
 
+sepBy : Parser sep -> Count -> Parser a -> Parser (List a)
+sepBy separator count parser =
+  let
+    separatorThenParser =
+      delayedCommit separator parser
+  in
+    case count of
+      AtLeast n ->
+        let
+          otherOptions =
+            if n == 0 then
+              [ succeed [] ]
+            else
+              []
+        in
+          oneOf <|
+            [ succeed (\head tail -> head :: tail)
+                |= parser
+                |= repeat (AtLeast (n - 1)) separatorThenParser
+            ] ++ otherOptions
+      Exactly n ->
+        succeed (\head tail -> head :: tail)
+          |= parser
+          |= repeat (Exactly (n - 1)) separatorThenParser
+
 --------------------------------------------------------------------------------
 -- Data Types
 --------------------------------------------------------------------------------
@@ -70,6 +95,7 @@ type Exp
   | EList (List Exp) (Maybe Exp)
   | ECase Exp (List CasePath)
   | EFunction (List Exp) Exp
+  | EFunctionApplication Exp (List Exp)
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -96,6 +122,9 @@ spaces1 =
   succeed identity
     |= space
     |. spaces
+
+sepBySpaces : Count -> Parser a -> Parser (List a)
+sepBySpaces = sepBy spaces1
 
 --------------------------------------------------------------------------------
 -- Block Helper
@@ -338,7 +367,7 @@ listLiteralInternal : Parser Exp -> Parser Exp
 listLiteralInternal elemParser =
   inContext "list literal" <|
     map (\heads -> EList heads Nothing) <|
-      repeat zeroOrMore elemParser
+      sepBySpaces zeroOrMore elemParser
 
 multiConsInternal : Parser Exp -> Parser Exp
 multiConsInternal elemParser =
@@ -346,7 +375,7 @@ multiConsInternal elemParser =
     delayedCommitMap
       (\heads tail -> EList heads (Just tail))
       ( succeed identity
-          |= repeat oneOrMore elemParser
+          |= sepBySpaces oneOrMore elemParser
           |. spaces
           |. symbol "|"
       )
@@ -398,7 +427,7 @@ caseExpression =
             |. keyword "case"
             |. spaces1
             |= exp
-            |= repeat oneOrMore casePath
+            |= sepBySpaces oneOrMore casePath
 
 --------------------------------------------------------------------------------
 -- Functions
@@ -411,7 +440,7 @@ function =
       oneOf
         [ map singleton pattern
           -- TODO determine if should be zeroOrMore or oneOrMore
-        , parenBlock <| repeat zeroOrMore pattern
+        , parenBlock <| sepBySpaces oneOrMore pattern
         ]
   in
     inContext "function" <|
@@ -421,6 +450,20 @@ function =
             |. symbol "\\"
             |= parameters
             |= exp
+
+--------------------------------------------------------------------------------
+-- Function Applications
+--------------------------------------------------------------------------------
+
+functionApplication : Parser Exp
+functionApplication =
+  inContext "function application" <|
+    lazy <| \_ ->
+      parenBlock <|
+        succeed EFunctionApplication
+          |= exp
+          |. spaces1
+          |= sepBySpaces oneOrMore exp
 
 --------------------------------------------------------------------------------
 -- General Expression
@@ -436,6 +479,7 @@ exp =
       , lazy (\_ -> list exp)
       , lazy (\_ -> caseExpression)
       , lazy (\_ -> function)
+      , lazy (\_ -> functionApplication)
       , identifier
       ]
 
