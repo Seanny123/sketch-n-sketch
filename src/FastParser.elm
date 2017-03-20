@@ -166,7 +166,8 @@ bracketBlock = block "[" "]"
 --------------------------------------------------------------------------------
 
 validIdentifierChar : Char -> Bool
-validIdentifierChar c = Char.isLower c || Char.isUpper c || c == '_'
+validIdentifierChar c =
+  Char.isLower c || Char.isUpper c || Char.isDigit c || c == '_'
 
 identifier : Parser Exp
 identifier =
@@ -546,7 +547,8 @@ letBinding =
 -- TODO fix options (and comments!)
 
 validOptionChar : Char -> Bool
-validOptionChar c = Char.isLower c || Char.isUpper c || Char.isDigit c
+validOptionChar c =
+  Char.isLower c || Char.isUpper c || Char.isDigit c
 
 option : Parser Exp
 option =
