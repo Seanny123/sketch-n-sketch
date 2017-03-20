@@ -100,6 +100,7 @@ type Exp
   | EFunctionApplication Exp (List Exp)
   -- type of let / recursive / pattern / value / inner
   | ELet LetKind Bool Exp Exp Exp
+  | EOption String String
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -165,7 +166,7 @@ bracketBlock = block "[" "]"
 --------------------------------------------------------------------------------
 
 validIdentifierChar : Char -> Bool
-validIdentifierChar c = Char.isLower c || Char.isUpper c
+validIdentifierChar c = Char.isLower c || Char.isUpper c || c == '_'
 
 identifier : Parser Exp
 identifier =
@@ -221,7 +222,7 @@ number =
   in
     inContext "number" <|
       succeed (\val frozen range -> ENumber frozen range val)
-        |= numParser
+        |= try numParser
         |= frozenAnnotation
         |= rangeAnnotation
 
@@ -539,6 +540,23 @@ letBinding =
         ]
 
 --------------------------------------------------------------------------------
+-- Options
+--------------------------------------------------------------------------------
+
+-- TODO fix options (and comments!)
+
+validOptionChar : Char -> Bool
+validOptionChar c = Char.isLower c || Char.isUpper c || Char.isDigit c
+
+option : Parser Exp
+option =
+  succeed EOption
+    |. symbol "#"
+    |= keep oneOrMore validOptionChar
+    |= keep oneOrMore validOptionChar
+    |. ignoreUntil "\n"
+
+--------------------------------------------------------------------------------
 -- General Expression
 --------------------------------------------------------------------------------
 
@@ -557,8 +575,11 @@ exp =
       , identifier
       ]
 
+program : Parser Exp
+program = exp
+
 --------------------------------------------------------------------------------
 -- Exports
 --------------------------------------------------------------------------------
 
-parse = run exp
+parse = run program
