@@ -1,0 +1,1302 @@
+
+; prelude.little
+;
+; This little library is accessible by every program.
+; This is not an example that generates an SVG canvas,
+; but we include it here for reference.
+
+;; The identity function - given a value, returns exactly that value
+(def id (\x x))
+
+;; A function that always returns the same value a, regardless of b
+(def always (\(x _) x))
+
+;; Composes two functions together
+(def compose (\(f g) (\x (f (g x)))))
+
+(def flip (\f (\(x y) (f y x))))
+  ; TODO other version:
+  ; (def flip (\(f x y) (f y x)))
+
+
+(def fst (\[a _] a))
+(def snd (\[_ b] b))
+
+;; Given a bool, returns the opposite boolean value
+(def not (\b (if b false true)))
+
+;; Given two bools, returns a bool regarding if the first argument is true, then the second argument is as well
+(def implies (\(p q) (if p q true)))
+
+
+(def or  (\(p q) (if p true q)))
+(def and (\(p q) (if p q false)))
+
+
+(def lt (\(x y) (< x y)))
+(def eq (\(x y) (= x y)))
+(def le (\(x y) (or (lt x y) (eq x y))))
+(def gt (flip lt))
+(def ge (\(x y) (or (gt x y) (eq x y))))
+
+;; Returns the length of a given list
+(defrec len (\xs (case xs ([] 0) ([_ | xs1] (+ 1 (len xs1))))))
+
+;; Maps a function, f, over a list of values and returns the resulting list
+(defrec map (\(f xs)
+  (case xs ([] []) ([hd|tl] [(f hd)|(map f tl)]))))
+
+;; Combines two lists with a given function, extra elements are dropped
+(defrec map2 (\(f xs ys)
+  (case [xs ys]
+    ([[x|xs1] [y|ys1]] [ (f x y) | (map2 f xs1 ys1) ])
+    (_                 []))))
+
+;; Combines three lists with a given function, extra elements are dropped
+(defrec map3 (\(f xs ys zs)
+  (case [xs ys zs]
+    ([[x|xs1] [y|ys1] [z|zs1]] [ (f x y z) | (map3 f xs1 ys1 zs1) ])
+    (_                         []))))
+
+;; Combines four lists with a given function, extra elements are dropped
+(defrec map4 (\(f ws xs ys zs)
+  (case [ws xs ys zs]
+    ([[w|ws1] [x|xs1] [y|ys1] [z|zs1]] [ (f w x y z) | (map4 f ws1 xs1 ys1 zs1) ])
+    (_                                 []))))
+
+;; Takes a function, an accumulator, and a list as input and reduces using the function from the left
+(defrec foldl (\(f acc xs)
+  (case xs ([] acc) ([x|xs1] (foldl f (f x acc) xs1)))))
+
+;; Takes a function, an accumulator, and a list as input and reduces using the function from the right
+(defrec foldr (\(f acc xs)
+  (case xs ([] acc) ([x|xs1] (f x (foldr f acc xs1))))))
+
+;; Given two lists, append the second list to the end of the first
+(defrec append (\(xs ys)
+  (case xs ([] ys) ([x|xs1] [ x | (append xs1 ys)]))))
+
+;; concatenate a list of lists into a single list
+(def concat (\xss (foldr append [] xss)))
+  ; TODO eta-reduced version:
+  ; (def concat (foldr append []))
+
+;; Map a given function over a list and concatenate the resulting list of lists
+(def concatMap (\(f xs) (concat (map f xs))))
+
+;; Takes two lists and returns a list that is their cartesian product
+(def cartProd (\(xs ys)
+  (concatMap (\x (map (\y [x y]) ys)) xs)))
+
+;; Takes elements at the same position from two input lists and returns a list of pairs of these elements
+(def zip (\(xs ys) (map2 (\(x y) [x y]) xs ys)))
+  ; TODO eta-reduced version:
+  ; (def zip (map2 (\(x y) [x y])))
+
+;; The empty list
+(def nil [])
+
+;; attaches an element to the front of a list
+(def cons (\(x xs) [x | xs]))
+
+;; attaches an element to the end of a list
+(def snoc (\(x ys) (append ys [x])))
+
+;; Returns the first element of a given list
+(def hd (\[x|xs] x))
+
+;; Returns the last element of a given list
+(def tl (\[x|xs] xs))
+
+;; Given a list, reverse its order
+(def reverse (\xs (foldl cons nil xs)))
+  ; TODO eta-reduced version:
+  ; (def reverse (foldl cons nil))
+
+;; Given two numbers, creates the list between them (inclusive)
+(defrec range (\(i j)
+  (if (< i (+ j 1))
+      (cons i (range (+ i 1) j))
+      nil)))
+
+;; Given a number, create the list of 0 to that number inclusive (number must be > 0)
+(def list0N (\n (range 0 n)))
+
+;; Given a number, create the list of 1 to that number inclusive
+(def list1N (\n (range 1 n)))
+
+(def zeroTo (\n (range 0 (- n 1))))
+
+;; Given a number n and some value x, return a list with x repeated n times
+(def repeat (\(n x) (map (always x) (range 1 n))))
+
+;; Given two lists, return a single list that alternates between their values (first element is from first list)
+(defrec intermingle (\(xs ys)
+  (case [xs ys]
+    ([[x|xs1] [y|ys1]] (cons x (cons y (intermingle xs1 ys1))))
+    ([[]      []]      nil)
+    (_                 (append xs ys)))))
+
+(def mapi (\(f xs) (map f (zip (range 0 (- (len xs) 1)) xs))))
+
+
+(defrec nth (\(xs n)
+  (if (< n 0)       null
+    (case [n xs]
+      ([_ []]       null)
+      ([0 [x|xs1]]  x)
+      ([_ [x|xs1]]  (nth xs1 (- n 1)))))))
+
+; (defrec nth (\(xs n)
+;   (if (< n 0)   'ERROR: nth'
+;     (case xs
+;       ([]       'ERROR: nth')
+;       ([x|xs1]  (if (= n 0) x (nth xs1 (- n 1))))))))
+
+; TODO change typ/def
+
+(defrec take (\(xs n)
+  (if (= n 0) []
+    (case xs
+      ([]      [null])
+      ([x|xs1] [x | (take xs1 (- n 1))])))))
+
+; (def take
+;   (letrec take_ (\(n xs)
+;     (case [n xs]
+;       ([0 _]       [])
+;       ([_ []]      [])
+;       ([_ [x|xs1]] [x | (take_ (- n 1) xs1)])))
+;   (compose take_ (max 0))))
+
+(defrec drop (\(xs n)
+  (if (le n 0)
+    xs
+    (case xs
+      ([]      null)
+      ([x|xs1] (drop xs1 (- n 1)))))))
+
+(defrec elem (\(x ys)
+  (case ys
+    ([]      false)
+    ([y|ys1] (or (= x y) (elem x ys1))))))
+
+;; multiply two numbers and return the result
+(defrec mult (\(m n)
+  (if (< m 1) 0 (+ n (mult (+ m -1) n)))))
+
+;; Given two numbers, subtract the second from the first
+(def minus (\(x y) (+ x (mult y -1))))
+
+;; Given two numbers, divide the first by the second
+(defrec div (\(m n)
+  (if (< m n) 0
+  (if (< n 2) m
+    (+ 1 (div (minus m n) n))))))
+
+;; Given a number, returns the negative of that number
+(def neg (\x (- 0 x)))
+
+;; Absolute value
+(def abs (\x (if (< x 0) (neg x) x)))
+
+;; Sign function; -1, 0, or 1 based on sign of given number
+(def sgn (\x (if (= 0 x) 0 (/ x (abs x)))))
+
+(defrec some (\(p xs)
+  (case xs
+    ([]      false)
+    ([x|xs1] (or (p x) (some p xs1))))))
+
+(defrec all (\(p xs)
+  (case xs
+    ([]      true)
+    ([x|xs1] (and (p x) (all p xs1))))))
+
+;; Given an upper bound, lower bound, and a number, restricts that number between those bounds (inclusive)
+;; Ex. clamp 1 5 4 = 4
+;; Ex. clamp 1 5 6 = 5
+(def clamp (\(i j n) (if (< n i) i (if (< j n) j n))))
+
+(def between (\(i j n) (= n (clamp i j n))))
+
+(def plus (\(x y) (+ x y)))
+
+(def min (\(i j) (if (lt i j) i j)))
+
+(def max (\(i j) (if (gt i j) i j)))
+
+(def minimum (\[hd|tl] (foldl min hd tl)))
+
+(def maximum (\[hd|tl] (foldl max hd tl)))
+
+(def average (\nums
+  (let sum (foldl plus 0 nums)
+  (let n   (len nums)
+    (/ sum n)))))
+
+;; Combine a list of strings with a given separator
+;; Ex. joinStrings ', ' ['hello' 'world'] = 'hello, world'
+(def joinStrings (\(sep ss)
+  (foldr (\(str acc) (if (= acc '') str (+ str (+ sep acc)))) '' ss)))
+
+;; Concatenate a list of strings and return the resulting string
+(def concatStrings (joinStrings ''))
+
+;; Concatenates a list of strings, interspersing a single space in between each string
+(def spaces (joinStrings ' '))
+
+;; First two arguments are appended at the front and then end of the third argument correspondingly
+;; Ex. delimit '+' '+' 'plus' = '+plus+'
+(def delimit (\(a b s) (concatStrings [a s b])))
+
+;; delimit a string with parentheses
+(def parens (delimit '(' ')'))
+
+;
+; SVG Manipulating Functions
+;
+
+; === SVG Types ===
+
+(def Point [Num Num])
+(def RGBA [Num Num Num Num])
+(def Color (union String Num RGBA))
+(def PathCmds (List (union String Num)))
+(def Points (List Point))
+(def RotationCmd [[String Num Num Num]])
+(def AttrVal (union String Num Bool Color PathCmds Points RotationCmd))
+(def AttrName String)
+(def AttrPair [AttrName AttrVal])
+(def Attrs (List AttrPair))
+(def NodeKind String)
+; TODO add recursive types properly
+(def SVG [NodeKind Attrs (List SVG_or_Text)])
+(def SVG_or_Text (union SVG [String String]))
+(def Blob (List SVG))
+
+; === Attribute Lookup ===
+
+(defrec lookupWithDefault (\(default k dict)
+  (let foo (lookupWithDefault default k)
+  (case dict
+    ([]            default)
+    ([[k1 v]|rest] (if (= k k1) v (foo rest)))))))
+
+(defrec lookup (\(k dict)
+  (let foo (lookup k)
+  (case dict
+    ([]            null)
+    ([[k1 v]|rest] (if (= k k1) v (foo rest)))))))
+
+(def lookupAttr (\([_ attrs _] k) (lookup k attrs)))
+
+(def lookupAttrWithDefault (\(default [_ attrs _] k) (lookupWithDefault default k attrs)))
+
+; === Points ===
+
+(def Vec2D [Num Num])
+
+(def x (\[x _] x))
+  ; TODO
+  ; (def x fst)
+
+(def y (\[_ y] y))
+  ; TODO
+  ; (def y snd)
+
+(def vec2DPlus (\(pt vec)
+  [
+    (+ (x pt) (x vec))
+    (+ (y pt) (y vec))
+  ]
+))
+
+(def vec2DMinus (\(pt vec)
+  [
+    (- (x pt) (x vec))
+    (- (y pt) (y vec))
+  ]
+))
+
+(def vec2DScalarMult (\(num vec)
+  [
+    (* (x vec) num)
+    (* (y vec) num)
+  ]
+))
+
+(def vec2DScalarDiv (\(num vec)
+  [
+    (/ (x vec) num)
+    (/ (y vec) num)
+  ]
+))
+
+(def vec2DLength (\([x1 y1] [x2 y2] Num)
+  (let [dx dy] [(- x2 x1) (- y2 y1)]
+  (sqrt (+ (* dx dx) (* dy dy))))))
+
+
+; === Circles ===
+
+(def Circle SVG)
+
+;; argument order - color, x, y, radius
+;; creates a circle, center at (x,y) with given radius and color
+(def circle (\(fill x y r)
+  ['circle'
+     [['cx' x] ['cy' y] ['r' r] ['fill' fill]]
+     []]))
+
+(def circleCenter (\circle
+  [
+    (lookupNumAttrWithDefault 0 circle 'cx')
+    (lookupNumAttrWithDefault 0 circle 'cy')
+  ]
+))
+
+(def circleRadius (\circle
+  (lookupNumAttrWithDefault 0 circle 'r')
+))
+
+(def circleDiameter (\circle
+  (* 2 (circleRadius circle))
+))
+
+(def circleNorth (\circle
+  (let [cx cy] (circleCenter circle)
+    [cx (- cy (circleRadius circle))]
+  )
+))
+
+(def circleEast (\circle
+  (let [cx cy] (circleCenter circle)
+    [(+ cx (circleRadius circle)) cy]
+  )
+))
+
+(def circleSouth (\circle
+  (let [cx cy] (circleCenter circle)
+    [cx (+ cy (circleRadius circle))]
+  )
+))
+
+(def circleWest (\circle
+  (let [cx cy] (circleCenter circle)
+    [(- cx (circleRadius circle)) cy]
+  )
+))
+
+
+;; argument order - color, width, x, y, radius
+;; Just as circle, except new width parameter determines thickness of ring
+(def ring (\(c w x y r)
+  ['circle'
+     [ ['cx' x] ['cy' y] ['r' r] ['fill' 'none'] ['stroke' c] ['stroke-width' w] ]
+     []]))
+
+
+; === Ellipses ===
+
+(def Ellipse SVG)
+
+;; argument order - color, x, y, x-radius, y-radius
+;; Just as circle, except radius is separated into x and y parameters
+(def ellipse (\(fill x y rx ry)
+  ['ellipse'
+     [ ['cx' x] ['cy' y] ['rx' rx] ['ry' ry] ['fill' fill] ]
+     []]))
+
+(def ellipseCenter (\ellipse
+  [
+    (lookupNumAttrWithDefault 0 ellipse 'cx')
+    (lookupNumAttrWithDefault 0 ellipse 'cy')
+  ]
+))
+
+(def ellipseRadiusX (\ellipse
+  (lookupNumAttrWithDefault 0 ellipse 'rx')
+))
+
+(def ellipseRadiusY (\ellipse
+  (lookupNumAttrWithDefault 0 ellipse 'ry')
+))
+
+(def ellipseDiameterX (\ellipse
+  (* 2 (ellipseRadiusX ellipse))
+))
+
+(def ellipseDiameterY (\ellipse
+  (* 2 (ellipseRadiusY ellipse))
+))
+
+(def ellipseNorth (\ellipse
+  (let [cx cy] (ellipseCenter ellipse)
+    [cx (- cy (ellipseRadiusY ellipse))]
+  )
+))
+
+(def ellipseEast (\ellipse
+  (let [cx cy] (ellipseCenter ellipse)
+    [(+ cx (ellipseRadiusX ellipse)) cy]
+  )
+))
+
+(def ellipseSouth (\ellipse
+  (let [cx cy] (ellipseCenter ellipse)
+    [cx (+ cy (ellipseRadiusY ellipse))]
+  )
+))
+
+(def ellipseWest (\ellipse
+  (let [cx cy] (ellipseCenter ellipse)
+    [(- cx (ellipseRadiusX ellipse)) cy]
+  )
+))
+
+
+; === Bounds-based shapes (Oval and Box) ===
+
+(def BoundedShape SVG)
+(def Bounds [Num Num Num Num])
+
+(def boundedShapeLeft (\shape
+  (lookupNumAttrWithDefault 0 shape 'LEFT')
+))
+
+(def boundedShapeTop (\shape
+  (lookupNumAttrWithDefault 0 shape 'TOP')
+))
+
+(def boundedShapeRight (\shape
+  (lookupNumAttrWithDefault 0 shape 'RIGHT')
+))
+
+(def boundedShapeBot (\shape
+  (lookupNumAttrWithDefault 0 shape 'BOT')
+))
+
+(def boundedShapeWidth (\shape
+  (- (boundedShapeRight shape) (boundedShapeLeft shape))
+))
+
+(def boundedShapeHeight (\shape
+  (- (boundedShapeBot shape) (boundedShapeTop shape))
+))
+
+(def boundedShapeLeftTop (\shape
+  [
+    (boundedShapeLeft shape)
+    (boundedShapeTop shape)
+  ]
+))
+
+(def boundedShapeCenterTop (\shape
+  [
+    (/ (+ (boundedShapeLeft shape) (boundedShapeRight shape)) 2)
+    (boundedShapeTop shape)
+  ]
+))
+
+(def boundedShapeRightTop (\shape
+  [
+    (boundedShapeRight shape)
+    (boundedShapeTop shape)
+  ]
+))
+
+(def boundedShapeRightCenter (\shape
+  [
+    (boundedShapeRight shape)
+    (/ (+ (boundedShapeTop shape) (boundedShapeBot shape)) 2)
+  ]
+))
+
+(def boundedShapeRightBot (\shape
+  [
+    (boundedShapeRight shape)
+    (boundedShapeBot shape)
+  ]
+))
+
+(def boundedShapeCenterBot (\shape
+  [
+    (/ (+ (boundedShapeLeft shape) (boundedShapeRight shape)) 2)
+    (boundedShapeBot shape)
+  ]
+))
+
+(def boundedShapeLeftBot (\shape
+  [
+    (boundedShapeLeft shape)
+    (boundedShapeBot shape)
+  ]
+))
+
+(def boundedShapeLeftCenter (\shape
+  [
+    (boundedShapeLeft shape)
+    (/ (+ (boundedShapeTop shape) (boundedShapeBot shape)) 2)
+  ]
+))
+
+(def boundedShapeCenter (\shape
+  [
+    (/ (+ (boundedShapeLeft shape) (boundedShapeRight shape)) 2)
+    (/ (+ (boundedShapeTop shape) (boundedShapeBot shape)) 2)
+  ]
+))
+
+
+; === Rectangles ===
+
+(def Rect SVG)
+
+;; argument order - color, x, y, width, height
+;; creates a rectangle of given width and height with (x,y) as the top left corner coordinate
+(def rect (\(fill x y w h)
+  ['rect'
+     [ ['x' x] ['y' y] ['width' w] ['height' h] ['fill' fill] ]
+     []]))
+
+(def square (\(fill x y side) (rect fill x y side side)))
+
+(def rectWidth (\rect
+  (lookupNumAttrWithDefault 0 rect 'width')
+))
+
+(def rectHeight (\rect
+  (lookupNumAttrWithDefault 0 rect 'height')
+))
+
+(def rectLeftTop (\rect
+  [
+    (lookupNumAttrWithDefault 0 rect 'x')
+    (lookupNumAttrWithDefault 0 rect 'y')
+  ]
+))
+
+(def rectCenterTop (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [ (/ (rectWidth rect) 2) 0 ]
+  )
+))
+
+(def rectRightTop (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [ (rectWidth rect) 0 ]
+  )
+))
+
+(def rectRightCenter (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [ (rectWidth rect) (/ (rectHeight rect) 2) ]
+  )
+))
+
+(def rectRightBot (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [ (rectWidth rect) (rectHeight rect) ]
+  )
+))
+
+(def rectCenterBot (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [ (/ (rectWidth rect) 2) (rectHeight rect) ]
+  )
+))
+
+(def rectLeftBot (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [0 (rectHeight rect) ]
+  )
+))
+
+(def rectLeftCenter (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [0 (/ (rectHeight rect) 2) ]
+  )
+))
+
+(def rectCenter (\rect
+  (vec2DPlus
+    (rectLeftTop rect)
+    [ (/ (rectWidth rect) 2) (/ (rectHeight rect) 2) ]
+  )
+))
+
+
+; === Lines ===
+
+(def Line SVG)
+
+;; argument order - color, width, x1, y1, x1, y2
+;; creates a line from (x1, y1) to (x2,y2) with given color and width
+(def line (\(fill w x1 y1 x2 y2)
+  ['line'
+     [ ['x1' x1] ['y1' y1] ['x2' x2] ['y2' y2] ['stroke' fill] ['stroke-width' w] ]
+     []]))
+
+(def lineBetween (\(fill w [x1 y1] [x2 y2])
+  (line fill w x1 y1 x2 y2)))
+
+(def lineStart (\line
+  [
+    (lookupNumAttrWithDefault 0 line 'x1')
+    (lookupNumAttrWithDefault 0 line 'y1')
+  ]
+))
+
+(def lineEnd (\line
+  [
+    (lookupNumAttrWithDefault 0 line 'x2')
+    (lookupNumAttrWithDefault 0 line 'y2')
+  ]
+))
+
+(def lineMidPoint (\line
+  (halfwayBetween (lineStart line) (lineEnd line))
+))
+
+
+;; argument order - fill, stroke, width, points
+;; creates a polygon following the list of points, with given fill color and a border with given width and stroke
+(def polygon (\(fill stroke w pts)
+  ['polygon'
+     [ ['fill' fill] ['points' pts] ['stroke' stroke] ['stroke-width' w] ]
+     []]))
+
+;; argument order - fill, stroke, width, points
+;; See polygon
+(def polyline (\(fill stroke w pts)
+  ['polyline'
+     [ ['fill' fill] ['points' pts] ['stroke' stroke] ['stroke-width' w] ]
+     []]))
+
+;; argument order - fill, stroke, width, d
+;; Given SVG path command d, create path with given fill color, stroke and width
+;; See https://developer.mozilla.org/en-US/docs/Web/SVG/Tutorial/Paths for path command info
+(def path (\(fill stroke w d)
+  ['path'
+     [ ['fill' fill] ['stroke' stroke] ['stroke-width' w] ['d' d] ]
+     []]))
+
+;; argument order - x, y, string
+;; place a text string with top left corner at (x,y) - with default color & font
+(def text (\(x y s)
+   ['text' [['x' x] ['y' y] ['style' 'fill:black']
+            ['font-family' 'Tahoma, sans-serif']]
+           [['TEXT' s]]]))
+
+;; argument order - shape, new attribute
+;; Add a new attribute to a given Shape
+(def addAttr (\([shapeKind oldAttrs children] newAttr)
+  [shapeKind (snoc newAttr oldAttrs) children]))
+
+(def consAttr (\([shapeKind oldAttrs children] newAttr)
+  [shapeKind (cons newAttr oldAttrs) children]))
+
+;; Given a list of shapes, compose into a single SVG
+(def svg (\shapes ['svg' [] shapes]))
+
+;; argument order - x-maximum, y-maximum, shapes
+;; Given a list of shapes, compose into a single SVG within the x & y maxima
+(def svgViewBox (\(xMax yMax shapes)
+  (let [sx sy] [(toString xMax) (toString yMax)]
+  ['svg'
+    [['x' '0'] ['y' '0'] ['viewBox' (joinStrings ' ' ['0' '0' sx sy])]]
+    shapes])))
+
+;; As rect, except x & y represent the center of the defined rectangle
+(def rectByCenter (\(fill cx cy w h)
+  (rect fill (- cx (/ w 2)) (- cy (/ h 2)) w h)))
+
+;; As square, except x & y represent the center of the defined rectangle
+(def squareByCenter (\(fill cx cy w) (rectByCenter fill cx cy w w)))
+
+;; Some shapes with given default values for fill, stroke, and stroke width
+; TODO remove these
+(def circle_    (circle 'red'))
+(def ellipse_   (ellipse 'orange'))
+(def rect_      (rect '#999999'))
+(def square_    (square '#999999'))
+(def line_      (line 'blue' 2))
+(def polygon_   (polygon 'green' 'purple' 3))
+(def path_      (path 'transparent' 'goldenrod' 5))
+
+;; updates an SVG by comparing differences with another SVG
+;; Note: accDiff pre-condition: indices in increasing order
+;; (so can't just use foldr instead of reverse . foldl)
+(def updateCanvas (\([_ svgAttrs oldShapes] diff)
+  (let oldShapesI (zip (list1N (len oldShapes)) oldShapes)
+  (let initAcc [[] diff]
+  (let f (\([i oldShape] [accShapes accDiff])
+    (case accDiff
+      ([]
+        [(cons oldShape accShapes) accDiff])
+      ([[j newShape] | accDiffRest]
+        (if (= i j)
+          [(cons newShape accShapes) accDiffRest]
+          [(cons oldShape accShapes) accDiff]))))
+  (let newShapes (reverse (fst (foldl f initAcc oldShapesI)))
+    ['svg' svgAttrs newShapes]))))))
+
+(def addBlob (\(newShapes ['svg' svgAttrs oldShapes])
+  ['svg' svgAttrs (append oldShapes newShapes)]))
+
+(def groupMap (\(xs f) (map f xs)))
+
+(def autoChose (\(_ x _) x))
+(def inferred  (\(x _ _) x))
+(def flow (\(_ x) x))
+
+; 'constant folding'
+(def twoPi (* 2 (pi)))
+(def halfPi (/ (pi) 2))
+
+;; Helper function for nPointsOnCircle, calculates angle of points
+;; Note: angles are calculated clockwise from the traditional pi/2 mark
+(def nPointsOnUnitCircle (\(n rot)
+  (let off (- halfPi rot)
+  (let foo (\i
+    (let ang (+ off (* (/ i n) twoPi))
+    [(cos ang) (neg (sin ang))]))
+  (map foo (list0N (- n 1)))))))
+
+;; argument order - Num of points, degree of rotation, x-center, y-center, radius
+;; Scales nPointsOnUnitCircle to the proper size and location with a given radius and center
+(def nPointsOnCircle (\(n rot cx cy r)
+  (let pts (nPointsOnUnitCircle n rot)
+  (map (\[x y] [(+ cx (* x r)) (+ cy (* y r))]) pts))))
+
+;; argument order -
+;; fill color - interior color of star
+;; stroke color - border color of star
+;; width - thickness of stroke
+;; points - number of star points
+;; len1 - length from center to one set of star points
+;; len2 - length from center to other set of star points (either inner or outer compared to len1)
+;; rot - degree of rotation
+;; cx - x-coordinate of center position
+;; cy - y-coordinate of center position
+;; Creates stars that can be modified on a number of parameters
+(def nStar (\(fill stroke w n len1 len2 rot cx cy)
+  (let pti (\[i len]
+    (let anglei (+ (- (/ (* i (pi)) n) rot) halfPi)
+    (let xi (+ cx (* len (cos anglei)))
+    (let yi (+ cy (neg (* len (sin anglei))))
+      [xi yi]))))
+  (let lengths
+    (map (\b (if b len1 len2))
+         (concat (repeat n [true false])))
+  (let indices (list0N (- (* 2! n) 1!))
+    (polygon fill stroke w (map pti (zip indices lengths))))))))
+
+(def setZones (\(s shape) (addAttr shape ['ZONES' s])))
+
+(def zones (\(s shapes) (map (setZones s) shapes)))
+  ; TODO eta-reduced version:
+  ; (def zones (\s (map (setZones s))))
+
+;; Remove all zones from shapes except for the first in the list
+(def hideZonesTail  (\[hd | tl] [hd | (zones 'none' tl)]))
+
+;; Turn all zones to basic for a given list of shapes except for the first shape
+(def basicZonesTail (\[hd | tl] [hd | (zones 'basic' tl)]))
+
+(def ghost
+  ; consAttr (instead of addAttr) makes internal calls to
+  ; Utils.maybeRemoveFirst 'HIDDEN' slightly faster
+  (\shape (consAttr shape ['HIDDEN' ''])))
+
+(def ghosts (map ghost))
+
+;; hSlider_ : Bool -> Bool -> Int -> Int -> Int -> Num -> Num -> Str -> Num
+;; -> [Num (List Svg)]
+;; argument order - dropBall roundInt xStart xEnd y minVal maxVal caption srcVal
+;; dropBall - Determines if the slider ball continues to appear past the edges of the slider
+;; roundInt - Determines whether to round to Ints or not
+;; xStart - left edge of slider
+;; xEnd - right edge of slider
+;; y - y positioning of entire slider bar
+;; minVal - minimum value of slider
+;; maxVal - maximum value of slider
+;; caption - text to display along with the slider
+;; srcVal - the current value given by the slider ball
+(def hSlider_ (\(dropBall roundInt x0 x1 y minVal maxVal caption srcVal)
+  (let preVal (clamp minVal maxVal srcVal)
+  (let targetVal (if roundInt (round preVal) preVal)
+  (let shapes
+    (let ball
+      (let [xDiff valDiff] [(- x1 x0) (- maxVal minVal)]
+      (let xBall (+ x0 (* xDiff (/ (- srcVal minVal) valDiff)))
+      (if (= preVal srcVal) (circle 'black' xBall y 10!)
+      (if dropBall          (circle 'black' 0! 0! 0!)
+                            (circle 'red' xBall y 10!)))))
+    [ (line 'black' 3! x0 y x1 y)
+      (text (+ x1 10) (+ y 5) (+ caption (toString targetVal)))
+      (circle 'black' x0 y 4!) (circle 'black' x1 y 4!) ball ])
+  [targetVal (ghosts shapes)])))))
+; TODO only draw zones for ball
+
+(def vSlider_ (\(dropBall roundInt y0 y1 x minVal maxVal caption srcVal)
+  (let preVal (clamp minVal maxVal srcVal)
+  (let targetVal (if roundInt (round preVal) preVal)
+  (let shapes
+    (let ball
+      (let [yDiff valDiff] [(- y1 y0) (- maxVal minVal)]
+      (let yBall (+ y0 (* yDiff (/ (- srcVal minVal) valDiff)))
+      (if (= preVal srcVal) (circle 'black' x yBall 10!)
+      (if dropBall          (circle 'black' 0! 0! 0!)
+                            (circle 'red' x yBall 10!)))))
+    [ (line 'black' 3! x y0 x y1)
+      ; (text (+ x1 10) (+ y 5) (+ caption (toString targetVal)))
+      (circle 'black' x y0 4!) (circle 'black' x y1 4!) ball ])
+  [targetVal (ghosts shapes)])))))
+; TODO only draw zones for ball
+
+(def hSlider (hSlider_ false))
+(def vSlider (vSlider_ false))
+
+;; button_ : Bool -> Num -> Num -> String -> Num -> SVG
+;; Similar to sliders, but just has boolean values
+(def button_ (\(dropBall xStart y caption xCur)
+  (let [rPoint wLine rBall wSlider] [4! 3! 10! 70!]
+  (let xEnd (+ xStart wSlider)
+  (let xBall (+ xStart (* xCur wSlider))
+  (let xBall_ (clamp xStart xEnd xBall)
+  (let val (< xCur 0.5)
+  (let shapes1
+    [ (circle 'black' xStart y rPoint)
+      (circle 'black' xEnd y rPoint)
+      (line 'black' wLine xStart y xEnd y)
+      (text (+ xEnd 10) (+ y 5) (+ caption (toString val))) ]
+  (let shapes2
+    [ (if (= xBall_ xBall) (circle (if val 'darkgreen' 'darkred') xBall y rBall)
+      (if dropBall         (circle 'black' 0! 0! 0!)
+                           (circle 'red' xBall y rBall))) ]
+  (let shapes (append (zones 'none' shapes1) (zones 'basic' shapes2))
+  [val (ghosts shapes)]))))))))))
+
+(def button (button_ false))
+
+(def xySlider
+  (\(xStart xEnd yStart yEnd xMin xMax yMin yMax xCaption yCaption xCur yCur)
+    (let [rCorner wEdge rBall] [4! 3! 10!]
+    (let [xDiff yDiff xValDiff yValDiff] [(- xEnd xStart) (- yEnd yStart) (- xMax xMin) (- yMax yMin)]
+    (let xBall (+ xStart (* xDiff (/ (- xCur xMin) xValDiff)))
+    (let yBall (+ yStart (* yDiff (/ (- yCur yMin) yValDiff)))
+    (let cBall (if (and (between xMin xMax xCur) (between yMin yMax yCur)) 'black' 'red')
+    (let xVal (ceiling (clamp xMin xMax xCur))
+    (let yVal (ceiling (clamp yMin yMax yCur))
+    (let myLine (\(x1 y1 x2 y2) (line 'black' wEdge x1 y1 x2 y2))
+    (let myCirc (\(x0 y0) (circle 'black' x0 y0 rCorner))
+    (let shapes
+      [ (myLine xStart yStart xEnd yStart)
+        (myLine xStart yStart xStart yEnd)
+        (myLine xStart yEnd xEnd yEnd)
+        (myLine xEnd yStart xEnd yEnd)
+        (myCirc xStart yStart)
+        (myCirc xStart yEnd)
+        (myCirc xEnd yStart)
+        (myCirc xEnd yEnd)
+        (circle cBall xBall yBall rBall)
+        (text (- (+ xStart (/ xDiff 2)) 40) (+ yEnd 20) (+ xCaption (toString xVal)))
+        (text (+ xEnd 10) (+ yStart (/ yDiff 2)) (+ yCaption (toString yVal))) ]
+    [ [ xVal yVal ] (ghosts shapes) ]
+))))))))))))
+
+(def addSelectionSliders (\(y0 seeds shapesCaps)
+  (let shapesCapsSeeds (zip shapesCaps (take seeds (len shapesCaps)))
+  (let foo (\[i [[shape cap] seed]]
+    (let [k _ _] shape
+    (let enum
+      (if (= k 'circle') ['' 'cx' 'cy' 'r']
+      (if (= k 'line')   ['' 'x1' 'y1' 'x2' 'y2']
+      (if (= k 'rect')   ['' 'x' 'y' 'width' 'height']
+        [(+ 'NO SELECTION ENUM FOR KIND ' k)])))
+    (let [item slider] (enumSlider 20! 170! (+ y0 (mult i 30!)) enum cap seed)
+    (let shape1 (addAttr shape ['SELECTED' item]) ; TODO overwrite existing
+    [shape1|slider])))))
+  (concat (mapi foo shapesCapsSeeds))))))
+
+; Text Widgets
+
+(def simpleText (\(family color size x1 x2 y horizAlignSeed textVal)
+  (let xMid (+ x1 (/ (- x2 x1) 2!))
+  (let [anchor hAlignSlider]
+    (let dx (/ (- x2 x1) 4!)
+    (let yLine (+ 30! y)
+    (enumSlider (- xMid dx) (+ xMid dx) yLine
+      ['start' 'middle' 'end'] '' horizAlignSeed)))
+  (let x
+    (if (= anchor 'start') x1
+    (if (= anchor 'middle') xMid
+    (if (= anchor 'end') x2
+      'CRASH')))
+  (let theText
+    ['text'
+      [['x' x] ['y' y]
+       ['style' (+ 'fill:' color)]
+       ['font-family' family] ['font-size' size]
+       ['text-anchor' anchor]]
+      [['TEXT' textVal]]]
+  (let rails
+    (let pad 15!
+    (let yBaseLine (+ y pad)
+    (let xSideLine (- x1 pad)
+    (let rail (line 'gray' 3)
+    (let baseLine (rail xSideLine yBaseLine x2 yBaseLine)
+    (let sideLine (rail xSideLine yBaseLine xSideLine (- y size))
+    (let dragBall (circle 'black' x yBaseLine 8!)
+    (ghosts [baseLine sideLine dragBall]))))))))
+  (concat [[theText] hAlignSlider rails])
+)))))))
+
+
+;; argument order - shape, rot, x, y
+;; Takes a shape rotates it rot degrees around point (x,y)
+(def rotate (\(shape n1 n2 n3)
+  (addAttr shape ['transform' [['rotate' n1 n2 n3]]])))
+
+(def rotateAround (\(rot x y shape)
+  (addAttr shape ['transform' [['rotate' rot x y]]])))
+
+; Convert radians to degrees
+(def radToDeg (\rad (* (/ rad (pi)) 180!)))
+
+; Convert degrees to radians
+(def degToRad (\deg (* (/ deg 180!) (pi))))
+
+; Polygon and Path Helpers
+
+(def middleOfPoints (\pts
+  (let [xs ys] [(map fst pts) (map snd pts)]
+  (let [xMin xMax] [(minimum xs) (maximum xs)]
+  (let [yMin yMax] [(minimum ys) (maximum ys)]
+  (let xMiddle (+ xMin (* 0.5 (- xMax xMin)))
+  (let yMiddle (+ yMin (* 0.5 (- yMax yMin)))
+    [xMiddle yMiddle] )))))))
+
+; (def allPointsOfPathCmds (\cmds
+;   (let toNum (\numOrString
+;   (map (\[x y] [(toNum x) (toNum y)]) (allPointsOfPathCmds_ cmds)))))
+
+; TODO remove inner annotations and named lambda
+
+
+
+; Raw Shapes
+
+(def rawShape (\(kind attrs) [kind attrs []]))
+
+(def rawRect (\(fill stroke strokeWidth x y w h rot)
+  (let [cx cy] [(+ x (/ w 2!)) (+ y (/ h 2!))]
+  (rotateAround rot cx cy
+    (rawShape 'rect' [
+      ['x' x] ['y' y] ['width' w] ['height' h]
+      ['fill' fill] ['stroke' stroke] ['stroke-width' strokeWidth] ])))))
+
+(def rawCircle (\(fill stroke strokeWidth cx cy r)
+  (rawShape 'circle' [
+    ['cx' cx] ['cy' cy] ['r' r]
+    ['fill' fill] ['stroke' stroke] ['stroke-width' strokeWidth] ])))
+
+(def rawEllipse (\(fill stroke strokeWidth cx cy rx ry rot)
+  (rotateAround rot cx cy
+    (rawShape 'ellipse' [
+      ['cx' cx] ['cy' cy] ['rx' rx] ['ry' ry]
+      ['fill' fill] ['stroke' stroke] ['stroke-width' strokeWidth] ]))))
+
+(def rawPolygon (\(fill stroke w pts rot)
+  (let [cx cy] (middleOfPoints pts)
+  (rotateAround rot cx cy
+    (rawShape 'polygon'
+      [ ['fill' fill] ['points' pts] ['stroke' stroke] ['stroke-width' w] ])))))
+
+(def rawPath (\(fill stroke w d rot)
+  (let [cx cy] (middleOfPoints (allPointsOfPathCmds d))
+  (rotateAround rot cx cy
+    (rawShape 'path'
+      [ ['fill' fill] ['d' d] ['stroke' stroke] ['stroke-width' w] ])))))
+
+
+; Shapes via Bounding Boxes
+
+(def box (\(bounds fill stroke strokeWidth)
+  (let [x y xw yh] bounds
+  ['BOX'
+    [ ['LEFT' x] ['TOP' y] ['RIGHT' xw] ['BOT' yh]
+      ['fill' fill] ['stroke' stroke] ['stroke-width' strokeWidth]
+    ] []
+  ])))
+
+; string fill/stroke/stroke-width attributes to avoid sliders
+(def hiddenBoundingBox (\bounds
+  (ghost (box bounds 'transparent' 'transparent' '0'))))
+
+(def simpleBoundingBox (\bounds
+  (ghost (box bounds 'transparent' 'darkblue' 1))))
+
+(def strList
+  (let foo (\(x acc) (+ (+ acc (if (= acc '') '' ' ')) (toString x)))
+  (foldl foo '')))
+
+(def fancyBoundingBox (\bounds
+  (let [left top right bot] bounds
+  (let [width height] [(- right left) (- bot top)]
+  (let [c1 c2 r] ['darkblue' 'skyblue' 6]
+  [ (ghost (box bounds 'transparent' c1 1))
+    (ghost (setZones 'none' (circle c2 left top r)))
+    (ghost (setZones 'none' (circle c2 right top r)))
+    (ghost (setZones 'none' (circle c2 right bot r)))
+    (ghost (setZones 'none' (circle c2 left bot r)))
+    (ghost (setZones 'none' (circle c2 left (+ top (/ height 2)) r)))
+    (ghost (setZones 'none' (circle c2 right (+ top (/ height 2)) r)))
+    (ghost (setZones 'none' (circle c2 (+ left (/ width 2)) top r)))
+    (ghost (setZones 'none' (circle c2 (+ left (/ width 2)) bot r)))
+  ])))))
+
+(def groupWithPad (\(pad bounds shapes)
+  (let [left top right bot] bounds
+  (let paddedBounds [(- left pad) (- top pad) (+ right pad) (+ bot pad)]
+  ['g' [['BOUNDS' bounds]]
+       (cons (hiddenBoundingBox paddedBounds) shapes)]
+))))
+
+(def group (groupWithPad (let nGroupPad 20 nGroupPad)))
+
+  ; NOTE:
+  ;   keep the names nGroupPad and nPolyPathPad (and values)
+  ;   in sync with ExpressionBasedTransform.elm
+
+  ; (def group (groupWithPad 15))
+
+(def polyPathGroup (groupWithPad (let nPolyPathPad 10 nPolyPathPad)))
+
+; TODO make one pass over pts
+(def boundsOfPoints (\pts
+  (let left  (minimum (map fst pts))
+  (let right (maximum (map fst pts))
+  (let top   (minimum (map snd pts))
+  (let bot   (maximum (map snd pts))
+    [left top right bot]
+))))))
+
+(def anchoredGroup (\shapes
+  (let bounds (boundsOfPoints (concat (map extremeShapePoints shapes)))
+  (group bounds shapes)
+)))
+
+; (def group (\(bounds shapes)
+;   ['g' [['BOUNDS' bounds]]
+;        (cons (hiddenBoundingBox bounds) shapes)]))
+
+       ; (concat [(fancyBoundingBox bounds) shapes])]))
+
+; TODO no longer used...
+(def rotatedRect (\(fill x y w h rot)
+  (let [cx cy] [(+ x (/ w 2!)) (+ y (/ h 2!))]
+  (let bounds [x y (+ x w) (+ y h)]
+  (let shape (rotateAround rot cx cy (rect fill x y w h))
+  (group bounds [shape])
+)))))
+
+(def rectangle (\(fill stroke strokeWidth rot bounds)
+  (let [left top right bot] bounds
+  (let [cx cy] [(+ left (/ (- right left) 2!)) (+ top (/ (- bot top) 2!))]
+  (let shape (rotateAround rot cx cy (box bounds fill stroke strokeWidth))
+  shape
+)))))
+  ; (group bounds [shape])
+
+; TODO no longer used...
+(def rotatedEllipse (\(fill cx cy rx ry rot)
+  (let bounds [(- cx rx) (- cy ry) (+ cx rx) (+ cy ry)]
+  (let shape (rotateAround rot cx cy (ellipse fill cx cy rx ry))
+  (group bounds [shape])
+))))
+
+; TODO take rot
+(def oval (\(fill stroke strokeWidth bounds)
+  (let [left top right bot] bounds
+  (let shape
+    ['OVAL'
+       [ ['LEFT' left] ['TOP' top] ['RIGHT' right] ['BOT' bot]
+         ['fill' fill] ['stroke' stroke] ['stroke-width' strokeWidth] ]
+       []]
+  shape
+))))
+
+; ; TODO take rot
+; (def oval (\(fill stroke strokeWidth bounds)
+;   (let [left top right bot] bounds
+;   (let [rx ry] [(/ (- right left) 2!) (/ (- bot top) 2!)]
+;   (let [cx cy] [(+ left rx) (+ top ry)]
+;   (let shape ; TODO change def ellipse to take stroke/strokeWidth
+;     ['ellipse'
+;        [ ['cx' cx] ['cy' cy] ['rx' rx] ['ry' ry]
+;          ['fill' fill] ['stroke' stroke] ['stroke-width' strokeWidth] ]
+;        []]
+;   (group bounds [shape])
+; ))))))
+
+(def scaleBetween (\(a b pct)
+  (case pct
+    (0 a)
+    (1 b)
+    (_ (+ a (* pct (- b a)))))))
+
+(def stretchyPolygon (\(bounds fill stroke strokeWidth percentages)
+  (let [left top right bot] bounds
+  (let [xScale yScale] [(scaleBetween left right) (scaleBetween top bot)]
+  (let pts (map (\[xPct yPct] [ (xScale xPct) (yScale yPct) ]) percentages)
+  ; (group bounds [(polygon fill stroke strokeWidth pts)])
+  (polyPathGroup bounds [(polygon fill stroke strokeWidth pts)])
+)))))
+
+; TODO no longer used...
+(def pointyPath (\(fill stroke w d)
+  (let dot (\(x y) (ghost (circle 'orange' x y 5)))
+  (letrec pointsOf (\cmds
+    (case cmds
+      ([]                     [])
+      (['Z']                  [])
+      (['M' x y | rest]       (append [(dot x y)] (pointsOf rest)))
+      (['L' x y | rest]       (append [(dot x y)] (pointsOf rest)))
+      (['Q' x1 y1 x y | rest] (append [(dot x1 y1) (dot x y)] (pointsOf rest)))
+      (['C' x1 y1 x2 y2 x y | rest] (append [(dot x1 y1) (dot x2 y2) (dot x y)] (pointsOf rest)))
+      (_                      'ERROR')))
+  ['g' []
+    (cons
+      (path fill stroke w d)
+      [])]
+))))
+      ; turning off points for now
+      ; (pointsOf d)) ]
+
+; can refactor to make one pass
+; can also change representation/template code to pair points
+(def stretchyPath (\(bounds fill stroke w d)
+  (let [left top right bot] bounds
+  (let [xScale yScale] [(scaleBetween left right) (scaleBetween top bot)]
+  (let dot (\(x y) (ghost (circle 'orange' x y 5)))
+  (letrec toPath (\cmds
+    (case cmds
+      ([]    [])
+      (['Z'] ['Z'])
+      (['M' x y | rest] (append ['M' (xScale x) (yScale y)] (toPath rest)))
+      (['L' x y | rest] (append ['L' (xScale x) (yScale y)] (toPath rest)))
+      (['Q' x1 y1 x y | rest]
+        (append ['Q' (xScale x1) (yScale y1) (xScale x) (yScale y)]
+                (toPath rest)))
+      (['C' x1 y1 x2 y2 x y | rest]
+        (append ['C' (xScale x1) (yScale y1) (xScale x2) (yScale y2) (xScale x) (yScale y)]
+                (toPath rest)))
+      (_ 'ERROR')))
+  (letrec pointsOf (\cmds
+    (case cmds
+      ([]    [])
+      (['Z'] [])
+      (['M' x y | rest] (append [(dot (xScale x) (yScale y))] (pointsOf rest)))
+      (['L' x y | rest] (append [(dot (xScale x) (yScale y))] (pointsOf rest)))
+      (['Q' x1 y1 x y | rest]
+        (append [(dot (xScale x1) (yScale y1)) (dot (xScale x) (yScale y))]
+                (pointsOf rest)))
+      (['C' x1 y1 x2 y2 x y | rest]
+        (append [(dot (xScale x1) (yScale y1))
+                 (dot (xScale x2) (yScale y2))
+                 (dot (xScale x)  (yScale y))]
+                (pointsOf rest)))
+      (_ 'ERROR')))
+  ; (group bounds
+  (polyPathGroup bounds
+    (cons
+      (path fill stroke w (toPath d))
+      []))
+)))))))
+      ; turning off points for now
+      ; (pointsOf d)))
+
+(def evalOffset (\[base off]
+  (case off
+    (0 base)
+    (_ (+ base off)))))
+
+(def stickyPolygon (\(bounds fill stroke strokeWidth offsets)
+  (let pts (map (\[xOff yOff] [ (evalOffset xOff) (evalOffset yOff) ]) offsets)
+  (group bounds [(polygon fill stroke strokeWidth pts)])
+)))
+
+(def withBounds (\(bounds f) (f bounds)))
+
+(def withAnchor (\(anchor f) (f anchor)))
+
+(def star (\bounds
+  (let [left top right bot] bounds
+  (let [width height] [(- right left) (- bot top)]
+  (let [cx cy] [(+ left (/ width 2)) (+ top (/ height 2))]
+  [(nStar 0 'black' 0 6 (min (/ width 2) (/ height 2)) 10 0 cx cy)]
+)))))
+
+(def blobs (\blobs
+  (let modifyBlob (\[i blob]
+    (case blob
+      ([['g' gAttrs [shape | shapes]]]
+       [['g' gAttrs [(consAttr shape ['BLOB' (toString (+ i 1))]) | shapes]]])
+      ([shape] [(consAttr shape ['BLOB' (toString (+ i 1))])])
+      (_       blob)))
+  (svg (concat (mapi modifyBlob blobs)))
+)))
+
+
+; === Relations ===
+
+(def halfwayBetween (\(pt1 pt2)
+  (vec2DScalarMult 0.5 (vec2DPlus pt1 pt2))
+))
+
+(def nextInLine (\(pt1 pt2)
+  (vec2DPlus pt2 (vec2DMinus pt2 pt1))
+))
+
+; Point on line segment, at `ratio` location.
+(def onLine (\(pt1 pt2 ratio)
+  (let vec (vec2DMinus pt2 pt1)
+  (vec2DPlus pt1 (vec2DScalarMult ratio vec)))))
+
+; === Basic Replicate ===
+
+(def linearArrayFromTo (\(n func [xStart yStart] [xEnd yEnd])
+  (let xsep (/ (- xEnd xStart) (- n 1))
+  (let ysep (/ (- yEnd yStart) (- n 1))
+  (let draw_i (\i
+    (let xi (+ xStart (* i xsep))
+    (let yi (+ yStart (* i ysep))
+    (func [xi yi]))))
+  (concat (map draw_i (zeroTo n)))
+)))))
+
+(def offsetAnchor (\(dx dy f)
+  (\[x y] (f [(+ x dx) (+ y dy)]))
+))
+
+; (def horizontalArrayByBounds (\(n sep func [left_0 top right_0 bot])
+;   (let w_i     (- right_0 left_0)
+;   (let left_i  (\i (+ left_0 (* i (+ w_i sep))))
+;   (let right_i (\i (+ (left_i i) w_i))
+;   (let draw_i  (\i (func [(left_i i) top (right_i i) bot]))
+;   (let bounds  [left_0 top (right_i (- n 1)) bot]
+;     [(groupWithPad 30 bounds (concat (map draw_i (zeroTo n))))]
+; )))))))
+
+; The type checker relies on the name of this definition.
+(let dummyPreludeMain ['svg' [] []] dummyPreludeMain)
