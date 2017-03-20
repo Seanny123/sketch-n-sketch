@@ -1,8 +1,16 @@
 module FastParser exposing (parse)
 
+import Char
+
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
-import Debug
+
+--------------------------------------------------------------------------------
+-- Helper Functions
+--------------------------------------------------------------------------------
+
+singleton : a -> List a
+singleton x = [x]
 
 --------------------------------------------------------------------------------
 -- Parser Combinators
@@ -50,7 +58,8 @@ type CasePath =
   CasePath Exp Exp
 
 type Exp
-  = ENumber FrozenState (Maybe Range) Float
+  = EIdentifier String
+  | ENumber FrozenState (Maybe Range) Float
   | EString String
   | EBool Bool
   | EOp0 Op0
@@ -60,6 +69,7 @@ type Exp
   -- heads / tail
   | EList (List Exp) (Maybe Exp)
   | ECase Exp (List CasePath)
+  | EFunction (List Exp) Exp
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -91,18 +101,44 @@ spaces1 =
 -- Block Helper
 --------------------------------------------------------------------------------
 
-openBlock : Parser ()
-openBlock =
+openBlock : String -> Parser ()
+openBlock openSymbol =
   succeed identity
     |. spaces
-    |= symbol "("
+    |= symbol openSymbol
     |. spaces
 
-closeBlock : Parser ()
-closeBlock =
+closeBlock : String -> Parser ()
+closeBlock closeSymbol =
   succeed identity
     |. spaces
-    |= symbol ")"
+    |= symbol closeSymbol
+
+block : String -> String -> Parser a -> Parser a
+block open close p =
+  delayedCommit (openBlock open) <|
+    succeed identity
+      |= p
+      |. closeBlock close
+
+parenBlock : Parser a -> Parser a
+parenBlock = block "(" ")"
+
+bracketBlock : Parser a -> Parser a
+bracketBlock = block "[" "]"
+
+--------------------------------------------------------------------------------
+-- Identifier
+--------------------------------------------------------------------------------
+
+validIdentifierChar : Char -> Bool
+validIdentifierChar c = Char.isLower c || Char.isUpper c
+
+identifier : Parser Exp
+identifier =
+  succeed EIdentifier
+    |. spaces
+    |= keep oneOrMore validIdentifierChar
 
 --------------------------------------------------------------------------------
 -- Constant Expressions
@@ -274,10 +310,7 @@ operator =
             , op2
             ]
       in
-        delayedCommit openBlock <|
-          succeed identity
-            |= inner
-            |. closeBlock
+        parenBlock inner
 
 --------------------------------------------------------------------------------
 -- Conditionals
@@ -286,59 +319,48 @@ operator =
 conditional : Parser Exp
 conditional =
   inContext "conditional" <|
-    delayedCommit openBlock <|
       lazy <| \_ ->
-        succeed EIf
-          |. keyword "if"
-          |. spaces1
-          |= exp
-          |. spaces1
-          |= exp
-          |. spaces1
-          |= exp
-          |. closeBlock
+        parenBlock <|
+          succeed EIf
+            |. keyword "if"
+            |. spaces1
+            |= exp
+            |. spaces1
+            |= exp
+            |. spaces1
+            |= exp
 
 --------------------------------------------------------------------------------
 -- Lists
 --------------------------------------------------------------------------------
 
-listLiteral : Parser Exp -> Parser Exp
-listLiteral elemParser =
+listLiteralInternal : Parser Exp -> Parser Exp
+listLiteralInternal elemParser =
   inContext "list literal" <|
-    try <|
-      succeed (\heads -> EList heads Nothing)
-        |. spaces
-        |. symbol "["
-        |= repeat zeroOrMore elemParser
-        |. spaces
-        |. symbol "]"
+    map (\heads -> EList heads Nothing) <|
+      repeat zeroOrMore elemParser
 
-multiCons : Parser Exp -> Parser Exp
-multiCons elemParser =
+multiConsInternal : Parser Exp -> Parser Exp
+multiConsInternal elemParser =
   inContext "multi cons literal" <|
     delayedCommitMap
       (\heads tail -> EList heads (Just tail))
       ( succeed identity
-          |. spaces
-          |. symbol "["
           |= repeat oneOrMore elemParser
           |. spaces
           |. symbol "|"
       )
-      ( succeed identity
-          |= elemParser
-          |. spaces
-          |. symbol "]"
-      )
+      elemParser
 
 list : Parser Exp -> Parser Exp
 list elemParser =
   inContext "list" <|
     lazy <| \_ ->
-      oneOf
-        [ listLiteral elemParser
-        , multiCons elemParser
-        ]
+      bracketBlock <|
+        oneOf
+          [ multiConsInternal elemParser
+          , listLiteralInternal elemParser
+          ]
 
 --------------------------------------------------------------------------------
 -- Patterns
@@ -348,12 +370,13 @@ pattern : Parser Exp
 pattern =
   inContext "pattern" <|
     oneOf
-      [ constant
+      [ identifier
+      , constant
       , lazy (\_ -> list pattern)
       ]
 
 --------------------------------------------------------------------------------
--- Case Expression
+-- Case Expressions
 --------------------------------------------------------------------------------
 
 caseExpression : Parser Exp
@@ -361,20 +384,43 @@ caseExpression =
   let
     casePath =
       inContext "case expression path" <|
-        delayedCommit openBlock <|
-          succeed CasePath
-            |= pattern
-            |. spaces1
-            |= exp
-            |. closeBlock
+        lazy <| \_ ->
+          parenBlock <|
+            succeed CasePath
+              |= pattern
+              |. spaces1
+              |= exp
   in
     inContext "case expression" <|
-      delayedCommit openBlock <|
-        succeed ECase
-          |. keyword "case"
-          |= exp
-          |= repeat oneOrMore casePath
-          |. closeBlock
+      lazy <| \_ ->
+        parenBlock <|
+          succeed ECase
+            |. keyword "case"
+            |. spaces1
+            |= exp
+            |= repeat oneOrMore casePath
+
+--------------------------------------------------------------------------------
+-- Functions
+--------------------------------------------------------------------------------
+
+function : Parser Exp
+function =
+  let
+    parameters =
+      oneOf
+        [ map singleton pattern
+          -- TODO determine if should be zeroOrMore or oneOrMore
+        , parenBlock <| repeat zeroOrMore pattern
+        ]
+  in
+    inContext "function" <|
+      lazy <| \_ ->
+        parenBlock <|
+          succeed EFunction
+            |. symbol "\\"
+            |= parameters
+            |= exp
 
 --------------------------------------------------------------------------------
 -- General Expression
@@ -389,6 +435,8 @@ exp =
       , lazy (\_ -> conditional)
       , lazy (\_ -> list exp)
       , lazy (\_ -> caseExpression)
+      , lazy (\_ -> function)
+      , identifier
       ]
 
 --------------------------------------------------------------------------------
