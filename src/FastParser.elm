@@ -82,6 +82,8 @@ type CasePath =
   -- pattern / value
   CasePath Exp Exp
 
+type LetKind = Let | Def
+
 type Exp
   = EIdentifier String
   | ENumber FrozenState (Maybe Range) Float
@@ -96,6 +98,8 @@ type Exp
   | ECase Exp (List CasePath)
   | EFunction (List Exp) Exp
   | EFunctionApplication Exp (List Exp)
+  -- type of let / recursive / pattern / value / inner
+  | ELet LetKind Bool Exp Exp Exp
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -466,6 +470,75 @@ functionApplication =
           |= sepBySpaces oneOrMore exp
 
 --------------------------------------------------------------------------------
+-- Let Bindings
+--------------------------------------------------------------------------------
+
+recursiveLetBinding : Parser Exp
+recursiveLetBinding =
+  inContext "recursive let binding" <|
+    parenBlock <|
+      succeed (ELet Let True)
+        |. keyword "letrec"
+        |. spaces1
+        |= identifier
+        |. spaces1
+        |= function
+        |. spaces1
+        |= exp
+
+simpleLetBinding : Parser Exp
+simpleLetBinding =
+  inContext "non-recursive let binding" <|
+    parenBlock <|
+      succeed (ELet Let False)
+        |. keyword "let"
+        |. spaces1
+        |= pattern
+        |. spaces1
+        |= exp
+        |. spaces1
+        |= exp
+
+recursiveDefBinding : Parser Exp
+recursiveDefBinding =
+  inContext "recursive def binding" <|
+    delayedCommit (openBlock "(") <|
+      succeed (ELet Def True)
+        |. keyword "defrec"
+        |. spaces1
+        |= identifier
+        |. spaces1
+        |= function
+        |. closeBlock ")"
+        |. spaces1
+        |= exp
+
+simpleDefBinding : Parser Exp
+simpleDefBinding =
+  inContext "non-recursive def binding" <|
+    delayedCommit (openBlock "(") <|
+      succeed (ELet Def False)
+        |. keyword "def"
+        |. spaces1
+        |= pattern
+        |. spaces1
+        |= exp
+        |. closeBlock ")"
+        |. spaces1
+        |= exp
+
+letBinding : Parser Exp
+letBinding =
+  inContext "let binding" <|
+    lazy <| \_ ->
+      oneOf
+        [ recursiveLetBinding
+        , simpleLetBinding
+        , recursiveDefBinding
+        , simpleDefBinding
+        ]
+
+--------------------------------------------------------------------------------
 -- General Expression
 --------------------------------------------------------------------------------
 
@@ -476,6 +549,7 @@ exp =
       [ constant
       , lazy (\_ -> operator)
       , lazy (\_ -> conditional)
+      , lazy (\_ -> letBinding)
       , lazy (\_ -> list exp)
       , lazy (\_ -> caseExpression)
       , lazy (\_ -> function)
