@@ -105,17 +105,40 @@ update msg model =
 --------------------------------------------------------------------------------
 
 displayModel model =
-  let (color, status, body) =
-    case (FastParser.parse model) of
-      (Ok exp) ->
-        ("#008800", "Success", toString exp)
-      (Err err) ->
-        ("#880000", "Error", toString err)
+  let
+    showContext c =
+      Html.p
+        []
+        [ Html.text <|
+            "(row: " ++ (toString c.row) ++ ", col: " ++ (toString c.col)
+              ++ ") Error trying to parse '" ++ c.description ++ "'."
+        ]
+    (color, status, body) =
+      case (FastParser.parse model) of
+        (Ok exp) ->
+          ("#008800"
+          , "Success"
+          , Html.p [] [ Html.text <| toString exp ]
+          )
+        (Err err) ->
+          ("#880000"
+          , "Error"
+          , Html.div
+              []
+              [ Html.h3 [] [ Html.text "Position" ]
+              , Html.p [] [ Html.text <| "Row: " ++ toString err.row ]
+              , Html.p [] [ Html.text <| "Col: " ++ toString err.col ]
+              , Html.h3 [] [ Html.text "Problem" ]
+              , Html.p [] [ Html.text <| toString err.problem ]
+              , Html.h3 [] [ Html.text "Context Stack" ]
+              , Html.p [] <| List.map showContext err.context
+              ]
+          )
   in
     Html.div
       [ style [ ("color", color) ] ]
       [ Html.h2 [] [ Html.text <| "Output (" ++ status ++ ")"]
-      , Html.p [] [ Html.text body ]
+      , body
       ]
 
 view model =
