@@ -4,6 +4,7 @@ import List
 import Char
 
 import String exposing (fromChar)
+import Set exposing (Set)
 
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
@@ -287,15 +288,47 @@ type Pattern
 -- Identifiers
 --------------------------------------------------------------------------------
 
-validIdentifierChar : Char -> Bool
-validIdentifierChar c =
+validIdentifierFirstChar : Char -> Bool
+validIdentifierFirstChar c =
+  Char.isLower c || Char.isUpper c || c == '_'
+
+validIdentifierRestChar : Char -> Bool
+validIdentifierRestChar c =
   Char.isLower c || Char.isUpper c || Char.isDigit c || c == '_' || c == '\''
+
+keywords : Set String
+keywords =
+  Set.fromList
+    [ "true"
+    , "false"
+    , "pi"
+    , "cos"
+    , "sin"
+    , "arccos"
+    , "arcsin"
+    , "floor"
+    , "ceiling"
+    , "round"
+    , "toString"
+    , "sqrt"
+    , "explode"
+    , "mod"
+    , "pow"
+    , "arctan2"
+    , "if"
+    , "case"
+    , "typecase"
+    , "let"
+    , "letrec"
+    , "def"
+    , "defrec"
+    , "typ"
+    ]
 
 identifierString : Parser Identifier
 identifierString =
   delayedCommit spaces <|
-    succeed identity
-      |= keep oneOrMore validIdentifierChar
+    variable validIdentifierFirstChar validIdentifierRestChar keywords
 
 identifier : Parser Pattern
 identifier =
