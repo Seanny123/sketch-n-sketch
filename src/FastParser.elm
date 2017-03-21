@@ -1,9 +1,16 @@
 module FastParser exposing (parse)
 
+import List
 import Char
+
+import String exposing (fromChar)
 
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
+
+--==============================================================================
+--= HELPERS
+--==============================================================================
 
 --------------------------------------------------------------------------------
 -- Helper Functions
@@ -44,63 +51,6 @@ sepBy separator count parser =
         succeed (\head tail -> head :: tail)
           |= parser
           |= repeat (Exactly (n - 1)) separatorThenParser
-
---------------------------------------------------------------------------------
--- Data Types
---------------------------------------------------------------------------------
-
-type FrozenState = Frozen | Thawed | Restricted
-type Range = Range Float Float
-
-type Op0
-  = Pi
-
-type Op1
-  = Cos
-  | Sin
-  | Arccos
-  | Arcsin
-  | Floor
-  | Ceiling
-  | Round
-  | ToString
-  | Sqrt
-  | Explode
-
-type Op2
-  = Plus
-  | Minus
-  | Multiply
-  | Divide
-  | LessThan
-  | Equal
-  | Mod
-  | Pow
-  | Arctan2
-
-type CasePath =
-  -- pattern / value
-  CasePath Exp Exp
-
-type LetKind = Let | Def
-
-type Exp
-  = EIdentifier String
-  | ENumber FrozenState (Maybe Range) Float
-  | EString String
-  | EBool Bool
-  | EOp0 Op0
-  | EOp1 Op1 Exp
-  | EOp2 Op2 Exp Exp
-  | EIf Exp Exp Exp
-  -- heads / tail
-  | EList (List Exp) (Maybe Exp)
-  | ECase Exp (List CasePath)
-  | EFunction (List Exp) Exp
-  | EFunctionApplication Exp (List Exp)
-  -- type of let / recursive / pattern / value / inner
-  | ELet LetKind Bool Exp Exp Exp
-  | EOption String String
 
 --------------------------------------------------------------------------------
 -- Whitespace
@@ -162,21 +112,64 @@ bracketBlock : Parser a -> Parser a
 bracketBlock = block "[" "]"
 
 --------------------------------------------------------------------------------
--- Identifier
+-- List Helper
 --------------------------------------------------------------------------------
 
-validIdentifierChar : Char -> Bool
-validIdentifierChar c =
-  Char.isLower c || Char.isUpper c || Char.isDigit c || c == '_'
+listLiteralInternal : String -> (List a -> a) -> Parser a -> Parser a
+listLiteralInternal context combiner parser  =
+  inContext context <|
+    succeed combiner
+      |= sepBySpaces zeroOrMore parser
 
-identifier : Parser Exp
-identifier =
-  succeed EIdentifier
-    |. spaces
-    |= keep oneOrMore validIdentifierChar
+multiConsInternal : String -> (List a -> a -> a) -> Parser a -> Parser a
+multiConsInternal context combiner parser =
+  inContext context <|
+    delayedCommitMap combiner
+      ( succeed identity
+          |= sepBySpaces oneOrMore parser
+          |. spaces
+          |. symbol "|"
+      )
+      parser
+
+genericList
+  : { generalContext : String
+    , listLiteralContext : String
+    , multiConsContext : String
+    , listLiteralCombiner : List a -> a
+    , multiConsCombiner : List a -> a -> a
+    , parser : Parser a
+    }
+  -> Parser a
+genericList args =
+  inContext args.generalContext <|
+    bracketBlock <|
+      oneOf
+        [ multiConsInternal
+            args.multiConsContext
+            args.multiConsCombiner
+            args.parser
+        , listLiteralInternal
+            args.listLiteralContext
+            args.listLiteralCombiner
+            args.parser
+        ]
+
+--==============================================================================
+--= CONSTANTS
+--==============================================================================
 
 --------------------------------------------------------------------------------
--- Constant Expressions
+-- Data Types
+--------------------------------------------------------------------------------
+
+type Constant
+  = CNumber FrozenState (Maybe Range) Float
+  | CString String
+  | CBool Bool
+
+--------------------------------------------------------------------------------
+-- Numbers
 --------------------------------------------------------------------------------
 
 numParser : Parser Float
@@ -189,12 +182,13 @@ numParser =
         , succeed 1
         ]
   in
-    delayedCommit spaces <|
+    try <|
       succeed (\s n -> s * n)
+        |. spaces
         |= sign
         |= float
 
-number : Parser Exp
+number : Parser Constant
 number =
   let
     frozenAnnotation =
@@ -222,37 +216,418 @@ number =
           ]
   in
     inContext "number" <|
-      succeed (\val frozen range -> ENumber frozen range val)
+      succeed (\val frozen range -> CNumber frozen range val)
         |= try numParser
         |= frozenAnnotation
         |= rangeAnnotation
 
-string : Parser Exp
-string =
-  inContext "string" <|
-    delayedCommit spaces <|
-      succeed EString
-        |. symbol "'"
-        |= keep zeroOrMore (\c -> c /= '\'')
-        |. symbol "'"
+--------------------------------------------------------------------------------
+-- Strings
+--------------------------------------------------------------------------------
 
-bool : Parser Exp
+string : Parser Constant
+string =
+  let
+    stringHelper quoteChar =
+      let
+        quoteString = fromChar quoteChar
+      in
+        succeed CString
+          |. symbol quoteString
+          |= keep zeroOrMore (\c -> c /= quoteChar)
+          |. symbol quoteString
+  in
+    inContext "string" <|
+      delayedCommit spaces <|
+        oneOf <| List.map stringHelper ['\'', '"']
+
+--------------------------------------------------------------------------------
+-- Bools
+--------------------------------------------------------------------------------
+
+bool : Parser Constant
 bool =
   delayedCommit spaces <|
     oneOf
-      [ succeed (EBool True)
+      [ succeed (CBool True)
           |. keyword "true"
-      , succeed (EBool False)
+      , succeed (CBool False)
           |. keyword "false"
       ]
 
-constant : Parser Exp
+--------------------------------------------------------------------------------
+-- General Constants
+--------------------------------------------------------------------------------
+
+constant : Parser Constant
 constant =
   oneOf
     [ number
     , string
     , bool
     ]
+
+--==============================================================================
+--= PATTERNS
+--==============================================================================
+
+--------------------------------------------------------------------------------
+-- Data Types
+--------------------------------------------------------------------------------
+
+type alias Identifier = String
+
+type Pattern
+  = PIdentifier Identifier
+  | PConstant Constant
+  | PList (List Pattern) (Maybe Pattern)
+  | PAs Identifier Pattern
+
+--------------------------------------------------------------------------------
+-- Identifiers
+--------------------------------------------------------------------------------
+
+validIdentifierChar : Char -> Bool
+validIdentifierChar c =
+  Char.isLower c || Char.isUpper c || Char.isDigit c || c == '_' || c == '\''
+
+identifierString : Parser Identifier
+identifierString =
+  delayedCommit spaces <|
+    succeed identity
+      |= keep oneOrMore validIdentifierChar
+
+identifier : Parser Pattern
+identifier =
+  map PIdentifier identifierString
+
+--------------------------------------------------------------------------------
+-- Constant Pattern
+--------------------------------------------------------------------------------
+
+constantPattern : Parser Pattern
+constantPattern =
+  map PConstant constant
+
+--------------------------------------------------------------------------------
+-- Pattern Lists
+--------------------------------------------------------------------------------
+
+patternList : Parser Pattern
+patternList =
+  lazy <| \_ ->
+    genericList
+      { generalContext = "pattern list"
+      , listLiteralContext = "pattern list literal"
+      , multiConsContext = "pattern multi cons literal"
+      , listLiteralCombiner = (\heads -> PList heads Nothing)
+      , multiConsCombiner = (\heads tail -> PList heads (Just tail))
+      , parser = pattern
+      }
+
+--------------------------------------------------------------------------------
+-- As-Patterns (@-Patterns)
+--------------------------------------------------------------------------------
+
+asPattern : Parser Pattern
+asPattern =
+  inContext "as pattern" <|
+    lazy <| \_ ->
+      delayedCommitMap
+      (\name pat -> PAs name pat)
+      ( succeed identity
+          |= identifierString
+          |. spaces
+          |. symbol "@"
+      )
+      pattern
+
+--------------------------------------------------------------------------------
+-- General Patterns
+--------------------------------------------------------------------------------
+
+pattern : Parser Pattern
+pattern =
+  inContext "pattern" <|
+    oneOf
+      [ lazy (\_ -> patternList)
+      , lazy (\_ -> asPattern)
+      , constantPattern
+      , identifier
+      ]
+
+--==============================================================================
+--= TYPES
+--==============================================================================
+
+--------------------------------------------------------------------------------
+-- Data Types
+--------------------------------------------------------------------------------
+
+type Type
+  = TNull
+  | TNum
+  | TBool
+  | TString
+  | TAlias Identifier
+  | TFunction (List Type)
+  | TList Type
+  -- heads / tail
+  | TTuple (List Type) (Maybe Type)
+  | TForall (List Identifier) Type
+  | TUnion (List Type)
+  | TWildcard
+
+--------------------------------------------------------------------------------
+-- Base Types
+--------------------------------------------------------------------------------
+
+nullType : Parser Type
+nullType =
+  inContext "null type" <|
+    delayedCommit spaces <|
+      succeed TNull
+        |. keyword "Null"
+
+numType : Parser Type
+numType =
+  inContext "number type" <|
+    delayedCommit spaces <|
+      succeed TNum
+        |. keyword "Num"
+
+boolType : Parser Type
+boolType =
+  inContext "bool type" <|
+    delayedCommit spaces <|
+      succeed TBool
+        |. keyword "Bool"
+
+stringType : Parser Type
+stringType =
+  inContext "string type" <|
+    delayedCommit spaces <|
+      succeed TString
+        |. keyword "String"
+
+--------------------------------------------------------------------------------
+-- Aliased Types
+--------------------------------------------------------------------------------
+
+aliasType : Parser Type
+aliasType =
+  inContext "alias type" <|
+    map TAlias identifierString
+
+--------------------------------------------------------------------------------
+-- Function Type
+--------------------------------------------------------------------------------
+
+functionType : Parser Type
+functionType =
+  inContext "function type" <|
+    lazy <| \_ ->
+      parenBlock <|
+        succeed TFunction
+          |. keyword "->"
+          |. spaces1
+          |= sepBySpaces oneOrMore typ
+
+--------------------------------------------------------------------------------
+-- List Type
+--------------------------------------------------------------------------------
+
+listType : Parser Type
+listType =
+  inContext "list type" <|
+    lazy <| \_ ->
+      parenBlock <|
+        succeed TList
+          |. keyword "List"
+          |. spaces1
+          |= typ
+
+--------------------------------------------------------------------------------
+-- Tuple Type
+--------------------------------------------------------------------------------
+
+tupleType : Parser Type
+tupleType =
+  lazy <| \_ ->
+    genericList
+      { generalContext = "tuple type"
+      , listLiteralContext = "tuple type list literal"
+      , multiConsContext = "tuple type multi cons literal"
+      , listLiteralCombiner = (\heads -> TTuple heads Nothing)
+      , multiConsCombiner = (\heads tail -> TTuple heads (Just tail))
+      , parser = typ
+      }
+
+--------------------------------------------------------------------------------
+-- Forall Type
+--------------------------------------------------------------------------------
+
+forallType : Parser Type
+forallType =
+  let
+    quantifiers =
+      oneOf
+        [ map singleton identifierString
+        , parenBlock <| sepBySpaces oneOrMore identifierString
+        ]
+  in
+    inContext "forall type" <|
+      lazy <| \_ ->
+        parenBlock <|
+          succeed TForall
+            |. keyword "forall"
+            |= quantifiers
+            |= typ
+
+--------------------------------------------------------------------------------
+-- Union Type
+--------------------------------------------------------------------------------
+
+unionType : Parser Type
+unionType =
+  inContext "union type" <|
+    lazy <| \_ ->
+      parenBlock <|
+        succeed TFunction
+          |. keyword "union"
+          |. spaces1
+          |= sepBySpaces oneOrMore typ
+
+--unionType : Parser Type
+--unionType =
+--  let
+--    separator =
+--      succeed identity
+--        |. spaces
+--        |. symbol "|"
+--  in
+--    inContext "union type" <|
+--      lazy <| \_ ->
+--        succeed TUnion
+--          |= sepBy separator oneOrMore typ
+
+--------------------------------------------------------------------------------
+-- Wildcard Type
+--------------------------------------------------------------------------------
+
+wildcardType : Parser Type
+wildcardType =
+  inContext "wildcard type" <|
+    delayedCommit spaces <|
+      succeed TWildcard
+        |. symbol "_"
+
+--------------------------------------------------------------------------------
+-- General Types
+--------------------------------------------------------------------------------
+
+typ : Parser Type
+typ =
+  inContext "type" <|
+    oneOf
+      [ nullType
+      , numType
+      , boolType
+      , stringType
+      , wildcardType
+      , lazy (\_ -> functionType)
+      , lazy (\_ -> listType)
+      , lazy (\_ -> tupleType)
+      , lazy (\_ -> forallType)
+      , lazy (\_ -> unionType)
+      , aliasType
+      ]
+
+--==============================================================================
+--= EXPRESSIONS
+--==============================================================================
+
+--------------------------------------------------------------------------------
+-- Data Types
+--------------------------------------------------------------------------------
+
+type FrozenState
+  = Frozen
+  | Thawed
+  | Restricted
+
+type Range
+  = Range Float Float
+
+type Op0
+  = Pi
+
+type Op1
+  = Cos
+  | Sin
+  | Arccos
+  | Arcsin
+  | Floor
+  | Ceiling
+  | Round
+  | ToString
+  | Sqrt
+  | Explode
+
+type Op2
+  = Plus
+  | Minus
+  | Multiply
+  | Divide
+  | LessThan
+  | Equal
+  | Mod
+  | Pow
+  | Arctan2
+
+type CaseBranch
+  = CaseBranch Pattern Exp
+
+type TypeCaseBranch
+  = TypeCaseBranch Type Exp
+
+type LetKind
+  = Let | Def
+
+type Exp
+  = EIdentifier Identifier
+  | EConstant Constant
+  | EOp0 Op0
+  | EOp1 Op1 Exp
+  | EOp2 Op2 Exp Exp
+  | EIf Exp Exp Exp
+  -- heads / tail
+  | EList (List Exp) (Maybe Exp)
+  | ECase Exp (List CaseBranch)
+  | ETypeCase Pattern (List TypeCaseBranch)
+  | EFunction (List Pattern) Exp
+  | EFunctionApplication Exp (List Exp)
+  -- type of let / recursive / pattern / value / inner
+  | ELet LetKind Bool Pattern Exp Exp
+  | EOption String String
+  | ETypeDeclaration Pattern Type Exp
+  | ETypeAnnotation Exp Type
+
+--------------------------------------------------------------------------------
+-- Identifier Expressions
+--------------------------------------------------------------------------------
+
+identifierExpression : Parser Exp
+identifierExpression =
+  map EIdentifier identifierString
+
+--------------------------------------------------------------------------------
+-- Constant Expressions
+--------------------------------------------------------------------------------
+
+constantExpression : Parser Exp
+constantExpression =
+  map EConstant constant
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
@@ -293,11 +668,13 @@ op1 =
         ]
   in
     inContext "unary operator" <|
-      delayedCommit spaces <|
-        succeed EOp1
+      delayedCommitMap
+      (\op e -> EOp1 op e)
+      ( succeed identity
           |= op
           |. spaces1
-          |= exp
+      )
+      exp
 
 op2 : Parser Exp
 op2 =
@@ -325,13 +702,17 @@ op2 =
         ]
   in
     inContext "binary operator" <|
-      delayedCommit spaces <|
-        succeed EOp2
+      delayedCommitMap
+      (\op (e1, e2) -> EOp2 op e1 e2)
+      ( succeed identity
           |= op
           |. spaces1
+      )
+      ( succeed (\e1 e2 -> (e1, e2))
           |= exp
           |. spaces1
           |= exp
+      )
 
 operator : Parser Exp
 operator =
@@ -368,47 +749,47 @@ conditional =
 --------------------------------------------------------------------------------
 -- Lists
 --------------------------------------------------------------------------------
+-- TODO cleanup
 
-listLiteralInternal : Parser Exp -> Parser Exp
-listLiteralInternal elemParser =
-  inContext "list literal" <|
-    map (\heads -> EList heads Nothing) <|
-      sepBySpaces zeroOrMore elemParser
+-- listLiteralInternal : Parser Exp -> Parser Exp
+-- listLiteralInternal elemParser =
+--   inContext "list literal" <|
+--     map (\heads -> EList heads Nothing) <|
+--       sepBySpaces zeroOrMore elemParser
+--
+-- multiConsInternal : Parser Exp -> Parser Exp
+-- multiConsInternal elemParser =
+--   inContext "multi cons literal" <|
+--     delayedCommitMap
+--       (\heads tail -> EList heads (Just tail))
+--       ( succeed identity
+--           |= sepBySpaces oneOrMore elemParser
+--           |. spaces
+--           |. symbol "|"
+--       )
+--       elemParser
 
-multiConsInternal : Parser Exp -> Parser Exp
-multiConsInternal elemParser =
-  inContext "multi cons literal" <|
-    delayedCommitMap
-      (\heads tail -> EList heads (Just tail))
-      ( succeed identity
-          |= sepBySpaces oneOrMore elemParser
-          |. spaces
-          |. symbol "|"
-      )
-      elemParser
+list : Parser Exp
+list =
+  lazy <| \_ ->
+    genericList
+      { generalContext = "list"
+      , listLiteralContext = "list literal"
+      , multiConsContext = "multi cons literal"
+      , listLiteralCombiner = (\heads -> EList heads Nothing)
+      , multiConsCombiner = (\heads tail -> EList heads (Just tail))
+      , parser = exp
+      }
 
-list : Parser Exp -> Parser Exp
-list elemParser =
-  inContext "list" <|
-    lazy <| \_ ->
-      bracketBlock <|
-        oneOf
-          [ multiConsInternal elemParser
-          , listLiteralInternal elemParser
-          ]
-
---------------------------------------------------------------------------------
--- Patterns
---------------------------------------------------------------------------------
-
-pattern : Parser Exp
-pattern =
-  inContext "pattern" <|
-    oneOf
-      [ identifier
-      , constant
-      , lazy (\_ -> list pattern)
-      ]
+--list : Parser Exp -> Parser Exp
+--list elemParser =
+--  inContext "list" <|
+--    lazy <| \_ ->
+--      bracketBlock <|
+--        oneOf
+--          [ multiConsInternal elemParser
+--          , listLiteralInternal elemParser
+--          ]
 
 --------------------------------------------------------------------------------
 -- Case Expressions
@@ -421,7 +802,7 @@ caseExpression =
       inContext "case expression path" <|
         lazy <| \_ ->
           parenBlock <|
-            succeed CasePath
+            succeed CaseBranch
               |= pattern
               |. spaces1
               |= exp
@@ -436,6 +817,31 @@ caseExpression =
             |= sepBySpaces oneOrMore casePath
 
 --------------------------------------------------------------------------------
+-- Type Case Expressions
+--------------------------------------------------------------------------------
+
+typeCaseExpression : Parser Exp
+typeCaseExpression =
+  let
+    typeCasePath =
+      inContext "type case expression path" <|
+        lazy <| \_ ->
+          parenBlock <|
+            succeed TypeCaseBranch
+              |= typ
+              |. spaces1
+              |= exp
+  in
+    inContext "type case expression" <|
+      lazy <| \_ ->
+        parenBlock <|
+          succeed ETypeCase
+            |. keyword "typecase"
+            |. spaces1
+            |= pattern
+            |= sepBySpaces oneOrMore typeCasePath
+
+--------------------------------------------------------------------------------
 -- Functions
 --------------------------------------------------------------------------------
 
@@ -445,7 +851,6 @@ function =
     parameters =
       oneOf
         [ map singleton pattern
-          -- TODO determine if should be zeroOrMore or oneOrMore
         , parenBlock <| sepBySpaces oneOrMore pattern
         ]
   in
@@ -559,29 +964,68 @@ option =
     |. ignoreUntil "\n"
 
 --------------------------------------------------------------------------------
--- General Expression
+-- Type Declarations
+--------------------------------------------------------------------------------
+
+typeDeclaration : Parser Exp
+typeDeclaration =
+  inContext "type declaration" <|
+    lazy <| \_ ->
+      delayedCommit (openBlock "(") <|
+        succeed ETypeDeclaration
+          |. keyword "typ"
+          |. spaces1
+          |= pattern
+          |. spaces1
+          |= typ
+          |. closeBlock ")"
+          |. spaces1
+          |= exp
+
+--------------------------------------------------------------------------------
+-- Type Annotation
+--------------------------------------------------------------------------------
+
+typeAnnotation : Parser Exp
+typeAnnotation =
+  inContext "type annotation" <|
+    lazy <| \_ ->
+      parenBlock <|
+        delayedCommitMap
+        (\e t -> ETypeAnnotation e t)
+        ( succeed identity
+            |= exp
+            |. spaces
+            |. symbol ":"
+        )
+        typ
+
+
+--------------------------------------------------------------------------------
+-- General Expressions
 --------------------------------------------------------------------------------
 
 exp : Parser Exp
 exp =
   inContext "expression" <|
     oneOf
-      [ constant
+      [ constantExpression
       , lazy (\_ -> operator)
       , lazy (\_ -> conditional)
       , lazy (\_ -> letBinding)
-      , lazy (\_ -> list exp)
       , lazy (\_ -> caseExpression)
+      , lazy (\_ -> typeCaseExpression)
+      , lazy (\_ -> typeDeclaration)
+      , lazy (\_ -> typeAnnotation)
+      , lazy (\_ -> list)
       , lazy (\_ -> function)
       , lazy (\_ -> functionApplication)
-      , identifier
+      , identifierExpression
       ]
 
-program : Parser Exp
-program = exp
+--==============================================================================
+--= EXPORTS
+--==============================================================================
 
---------------------------------------------------------------------------------
--- Exports
---------------------------------------------------------------------------------
-
-parse = run program
+parse : String -> Result Error Exp
+parse = run exp
