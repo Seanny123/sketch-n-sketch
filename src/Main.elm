@@ -118,7 +118,7 @@ displayModel model =
         (Ok exp) ->
           ("#008800"
           , "Success"
-          , Html.p [] [ Html.text <| toString exp ]
+          , Html.pre [] [ Html.text <| toString exp ]
           )
         (Err err) ->
           ("#880000"

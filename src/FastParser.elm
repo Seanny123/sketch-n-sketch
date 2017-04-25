@@ -57,6 +57,8 @@ sepBy separator count parser =
 -- Whitespace
 --------------------------------------------------------------------------------
 
+type alias WS = String
+
 isSpace : Char -> Bool
 isSpace c =
   c == ' ' || c == '\n'
@@ -81,6 +83,22 @@ spaces1 =
 
 sepBySpaces : Count -> Parser a -> Parser (List a)
 sepBySpaces = sepBy spaces1
+
+blank : Parser WS
+blank =
+  keep (Exactly 1) isSpace
+
+blanks : Parser WS
+blanks =
+  keep zeroOrMore isSpace
+
+blanks1 : Parser WS
+blanks1 =
+  keep oneOrMore isSpace
+
+blankMap : (WS -> a -> b) -> Parser a -> Parser b
+blankMap combiner p =
+  delayedCommitMap combiner blanks p
 
 --------------------------------------------------------------------------------
 -- Block Helper
@@ -143,6 +161,29 @@ genericList
     }
   -> Parser a
 genericList args =
+  inContext args.generalContext <|
+    bracketBlock <|
+      oneOf
+        [ multiConsInternal
+            args.multiConsContext
+            args.multiConsCombiner
+            args.parser
+        , listLiteralInternal
+            args.listLiteralContext
+            args.listLiteralCombiner
+            args.parser
+        ]
+
+genericBlankList
+  : { generalContext : String
+    , listLiteralContext : String
+    , multiConsContext : String
+    , listLiteralCombiner : List a -> a
+    , multiConsCombiner : List a -> a -> a
+    , parser : Parser a
+    }
+  -> Parser a
+genericBlankList args =
   inContext args.generalContext <|
     bracketBlock <|
       oneOf
@@ -269,24 +310,8 @@ constant =
     ]
 
 --==============================================================================
---= PATTERNS
+--= IDENTIFIERS
 --==============================================================================
-
---------------------------------------------------------------------------------
--- Data Types
---------------------------------------------------------------------------------
-
-type alias Identifier = String
-
-type Pattern
-  = PIdentifier Identifier
-  | PConstant Constant
-  | PList (List Pattern) (Maybe Pattern)
-  | PAs Identifier Pattern
-
---------------------------------------------------------------------------------
--- Identifiers
---------------------------------------------------------------------------------
 
 validIdentifierFirstChar : Char -> Bool
 validIdentifierFirstChar c =
@@ -325,14 +350,41 @@ keywords =
     , "typ"
     ]
 
+-- identifierString : Parser Identifier
+-- identifierString =
+--   delayedCommit spaces <|
+--     variable validIdentifierFirstChar validIdentifierRestChar keywords
+
 identifierString : Parser Identifier
 identifierString =
-  delayedCommit spaces <|
-    variable validIdentifierFirstChar validIdentifierRestChar keywords
+  variable validIdentifierFirstChar validIdentifierRestChar keywords
+
+--==============================================================================
+--= PATTERNS
+--==============================================================================
+
+--------------------------------------------------------------------------------
+-- Data Types
+--------------------------------------------------------------------------------
+
+type alias Identifier = String
+
+type Pattern
+  = PIdentifier WS Identifier
+  | PConstant WS Constant
+  | PList (List Pattern) (Maybe Pattern)
+  --| PList WS (List Pattern) WS (Maybe Pattern) WS
+  | PAs Identifier Pattern
+
+-- type Pattern
+--   = PIdentifier WS Identifier
+--   | PConstant WS Constant
+--   | PList WS (List Pattern) WS (Maybe Pattern) WS
+--   | PAs WS Identifier WS Pattern
 
 identifier : Parser Pattern
 identifier =
-  map PIdentifier identifierString
+  blankMap PIdentifier identifierString
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
@@ -340,7 +392,7 @@ identifier =
 
 constantPattern : Parser Pattern
 constantPattern =
-  map PConstant constant
+  blankMap PConstant constant
 
 --------------------------------------------------------------------------------
 -- Pattern Lists
