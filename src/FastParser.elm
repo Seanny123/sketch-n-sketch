@@ -277,18 +277,6 @@ blankMultiConsInternal context combiner elem =
           elem
       )
 
-
---     delayedCommitMap (\(heads, wsBar) tail -> listCombiner heads wsBar tail)
---       ( succeed (,)
---           |= sepByGeneral elemCombiner "" blanks1 oneOrMore parser
---           |= blanks
---           |. symbol "|"
---       )
---       ( succeed elemCombiner
---           |= blanks
---           |= parser
---       )
-
 genericBlankList
   :  { generalContext : String
      , listLiteralContext : String
@@ -489,6 +477,10 @@ type Pattern
   | PList WS (List Pattern) WS (Maybe Pattern) WS
   | PAs WS Identifier WS Pattern
 
+--------------------------------------------------------------------------------
+-- Identifier Pattern
+--------------------------------------------------------------------------------
+
 identifier : Parser Pattern
 identifier =
   delayedCommitMap PIdentifier blanks identifierString
@@ -572,8 +564,8 @@ type Type
   | TNum WS
   | TBool WS
   | TString WS
-  | TAlias Identifier
-  | TFunction (List Type)
+  | TAlias WS Identifier
+  | TFunction WS (List Type) WS
   | TList Type
   -- heads / tail
   | TTuple (List Type) (Maybe Type)
@@ -628,7 +620,7 @@ stringType =
 aliasType : Parser Type
 aliasType =
   inContext "alias type" <|
-    map TAlias identifierString
+    delayedCommitMap TAlias blanks identifierString
 
 --------------------------------------------------------------------------------
 -- Function Type
@@ -638,11 +630,10 @@ functionType : Parser Type
 functionType =
   inContext "function type" <|
     lazy <| \_ ->
-      parenBlock <|
-        succeed TFunction
+      parenBlankBlock TFunction <|
+        succeed identity
           |. keyword "->"
-          |. spaces1
-          |= sepBySpaces oneOrMore typ
+          |= repeat oneOrMore typ
 
 --------------------------------------------------------------------------------
 -- List Type
@@ -704,7 +695,7 @@ unionType =
   inContext "union type" <|
     lazy <| \_ ->
       parenBlock <|
-        succeed TFunction
+        succeed TUnion
           |. keyword "union"
           |. spaces1
           |= sepBySpaces oneOrMore typ
