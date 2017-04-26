@@ -559,6 +559,10 @@ pattern =
 -- Data Types
 --------------------------------------------------------------------------------
 
+type OneOrMany a
+  = One a
+  | Many WS (List a) WS
+
 type Type
   = TNull WS
   | TNum WS
@@ -566,10 +570,10 @@ type Type
   | TString WS
   | TAlias WS Identifier
   | TFunction WS (List Type) WS
-  | TList Type
+  | TList WS Type WS
   -- heads / tail
-  | TTuple (List Type) (Maybe Type)
-  | TForall (List Identifier) Type
+  | TTuple WS (List Type) WS (Maybe Type) WS
+  | TForall WS (OneOrMany (WS, Identifier)) Type WS
   | TUnion (List Type)
   | TWildcard
 
@@ -643,10 +647,9 @@ listType : Parser Type
 listType =
   inContext "list type" <|
     lazy <| \_ ->
-      parenBlock <|
-        succeed TList
+      parenBlankBlock TList <|
+        succeed identity
           |. keyword "List"
-          |. spaces1
           |= typ
 
 --------------------------------------------------------------------------------
@@ -656,13 +659,23 @@ listType =
 tupleType : Parser Type
 tupleType =
   lazy <| \_ ->
-    genericList
-      { generalContext = "tuple type"
-      , listLiteralContext = "tuple type list literal"
-      , multiConsContext = "tuple type multi cons literal"
-      , listLiteralCombiner = (\heads -> TTuple heads Nothing)
-      , multiConsCombiner = (\heads tail -> TTuple heads (Just tail))
-      , parser = typ
+    genericBlankList
+      { generalContext =
+          "tuple type"
+      , listLiteralContext =
+          "tuple type list literal"
+      , multiConsContext =
+          "tuple type multi cons literal"
+      , listLiteralCombiner =
+          ( \wsStart heads wsEnd ->
+              TTuple wsStart heads "" Nothing wsEnd
+          )
+      , multiConsCombiner =
+          ( \wsStart heads wsBar tail wsEnd ->
+              TTuple wsStart heads wsBar (Just tail) wsEnd
+          )
+      , elem =
+          typ
       }
 
 --------------------------------------------------------------------------------
@@ -672,19 +685,27 @@ tupleType =
 forallType : Parser Type
 forallType =
   let
+    wsIdentifierPair =
+      delayedCommitMap (,) blanks identifierString
     quantifiers =
       oneOf
-        [ map singleton identifierString
-        , parenBlock <| sepBySpaces oneOrMore identifierString
+        [ inContext "forall type (one)" <|
+            map One wsIdentifierPair
+        , inContext "forall type (many) "<|
+            parenBlankBlock Many <|
+              repeat zeroOrMore wsIdentifierPair
         ]
   in
     inContext "forall type" <|
       lazy <| \_ ->
-        parenBlock <|
-          succeed TForall
+        parenBlankBlock
+        ( \wsStart (qs, t) wsEnd -> TForall wsStart qs t wsEnd
+        )
+        ( succeed (,)
             |. keyword "forall"
             |= quantifiers
             |= typ
+        )
 
 --------------------------------------------------------------------------------
 -- Union Type
