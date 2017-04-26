@@ -487,17 +487,11 @@ type Pattern
   = PIdentifier WS Identifier
   | PConstant WS Constant
   | PList WS (List Pattern) WS (Maybe Pattern) WS
-  | PAs Identifier Pattern
-
--- type Pattern
---   = PIdentifier WS Identifier
---   | PConstant WS Constant
---   | PList WS (List Pattern) WS (Maybe Pattern) WS
---   | PAs WS Identifier WS Pattern
+  | PAs WS Identifier WS Pattern
 
 identifier : Parser Pattern
 identifier =
-  blankMap PIdentifier identifierString
+  delayedCommitMap PIdentifier blanks identifierString
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
@@ -505,7 +499,7 @@ identifier =
 
 constantPattern : Parser Pattern
 constantPattern =
-  blankMap PConstant constant
+  delayedCommitMap PConstant blanks constant
 
 --------------------------------------------------------------------------------
 -- Pattern Lists
@@ -542,10 +536,11 @@ asPattern =
   inContext "as pattern" <|
     lazy <| \_ ->
       delayedCommitMap
-      (\name pat -> PAs name pat)
-      ( succeed identity
+      (\(wsStart, name, wsAt) pat -> PAs wsStart name wsAt pat)
+      ( succeed (,,)
+          |= blanks
           |= identifierString
-          |. spaces
+          |= blanks
           |. symbol "@"
       )
       pattern
