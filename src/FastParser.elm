@@ -568,10 +568,10 @@ pattern =
 --------------------------------------------------------------------------------
 
 type Type
-  = TNull
-  | TNum
-  | TBool
-  | TString
+  = TNull WS
+  | TNum WS
+  | TBool WS
+  | TString WS
   | TAlias Identifier
   | TFunction (List Type)
   | TList Type
@@ -581,37 +581,45 @@ type Type
   | TUnion (List Type)
   | TWildcard
 
+-- type Type
+--   = TNull WS
+--   | TNum WS
+--   | TBool WS
+--   | TString WS
+--   | TAlias WS Identifier
+--   | TFunction WS (List Type) WS
+--   | TList WS Type WS
+--   | TTuple WS (List Type) WS (Maybe Type) WS
+--   | TForall WS (List Identifier) Type WS
+--   | TUnion WS (List Type) WS
+--   | TWildcard WS
+
 --------------------------------------------------------------------------------
 -- Base Types
 --------------------------------------------------------------------------------
 
+baseType : String -> (WS -> Type) -> String -> Parser Type
+baseType context combiner token =
+  inContext context <|
+    delayedCommitMap always
+      (map combiner blanks)
+      (keyword token)
+
 nullType : Parser Type
 nullType =
-  inContext "null type" <|
-    delayedCommit spaces <|
-      succeed TNull
-        |. keyword "Null"
+  baseType "null type" TNull "Null"
 
 numType : Parser Type
 numType =
-  inContext "number type" <|
-    delayedCommit spaces <|
-      succeed TNum
-        |. keyword "Num"
+  baseType "num type" TNum "Num"
 
 boolType : Parser Type
 boolType =
-  inContext "bool type" <|
-    delayedCommit spaces <|
-      succeed TBool
-        |. keyword "Bool"
+  baseType "boool type" TBool "Bool"
 
 stringType : Parser Type
 stringType =
-  inContext "string type" <|
-    delayedCommit spaces <|
-      succeed TString
-        |. keyword "String"
+  baseType "string type" TString "String"
 
 --------------------------------------------------------------------------------
 -- Aliased Types
