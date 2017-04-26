@@ -53,6 +53,43 @@ sepBy separator count parser =
           |= parser
           |= repeat (Exactly (n - 1)) separatorThenParser
 
+---
+
+optional : Parser a -> a -> Parser a
+optional p default =
+  oneOf
+    [ p
+    , succeed default
+    ]
+
+sepByGeneral
+  : (sep -> a -> b) -> sep -> Parser sep -> Count -> Parser a -> Parser (List b)
+sepByGeneral combiner defaultSeparator separator count parser =
+  let
+    optionalSeparatorThenParser =
+      delayedCommitMap combiner (optional separator defaultSeparator) parser
+    separatorThenParser =
+      delayedCommitMap combiner separator parser
+  in
+    case count of
+      AtLeast n ->
+        let
+          otherOptions =
+            if n == 0 then
+              [ succeed [] ]
+            else
+              []
+        in
+          oneOf <|
+            [ succeed (\head tail -> head :: tail)
+                |= optionalSeparatorThenParser
+                |= repeat (AtLeast (n - 1)) separatorThenParser
+            ] ++ otherOptions
+      Exactly n ->
+        succeed (\head tail -> head :: tail)
+          |= optionalSeparatorThenParser
+          |= repeat (Exactly (n - 1)) separatorThenParser
+
 --------------------------------------------------------------------------------
 -- Whitespace
 --------------------------------------------------------------------------------
@@ -84,6 +121,8 @@ spaces1 =
 sepBySpaces : Count -> Parser a -> Parser (List a)
 sepBySpaces = sepBy spaces1
 
+---
+
 blank : Parser WS
 blank =
   keep (Exactly 1) isSpace
@@ -95,6 +134,9 @@ blanks =
 blanks1 : Parser WS
 blanks1 =
   keep oneOrMore isSpace
+
+sepByBlanks : Count -> Parser a -> Parser (List a)
+sepByBlanks = sepBy spaces1
 
 blankMap : (WS -> a -> b) -> Parser a -> Parser b
 blankMap combiner p =
@@ -129,6 +171,36 @@ parenBlock = block "(" ")"
 
 bracketBlock : Parser a -> Parser a
 bracketBlock = block "[" "]"
+
+---
+
+openBlankBlock : String -> Parser WS
+openBlankBlock openSymbol =
+  succeed identity
+    |= blanks
+    |. symbol openSymbol
+
+closeBlankBlock : String -> Parser WS
+closeBlankBlock closeSymbol =
+  succeed identity
+    |= blanks
+    |. symbol closeSymbol
+
+blankBlock : (WS -> a -> WS -> b) -> String -> String -> Parser a -> Parser b
+blankBlock combiner open close p =
+    delayedCommitMap
+      (\wsStart (result, wsEnd) -> combiner wsStart result wsEnd)
+      (openBlankBlock open)
+      ( succeed (,)
+          |= p
+          |= closeBlankBlock close
+      )
+
+parenBlankBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
+parenBlankBlock combiner = blankBlock combiner "(" ")"
+
+bracketBlankBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
+bracketBlankBlock combiner = blankBlock combiner "[" "]"
 
 --------------------------------------------------------------------------------
 -- List Helper
@@ -174,28 +246,70 @@ genericList args =
             args.parser
         ]
 
+---
+
+blankListLiteralInternal
+  : String -> (WS -> List elem -> WS -> list) -> Parser elem -> Parser list
+blankListLiteralInternal context combiner elem  =
+  inContext context <|
+    bracketBlankBlock combiner (repeat zeroOrMore elem)
+
+blankMultiConsInternal
+  :  String
+  -> (WS -> List elem -> WS -> elem -> WS -> list)
+  -> Parser elem
+  -> Parser list
+blankMultiConsInternal context combiner elem =
+  inContext context <|
+    bracketBlankBlock
+      ( \wsStart (heads, wsBar, tail) wsEnd ->
+          combiner wsStart heads wsBar tail wsEnd
+      )
+      ( delayedCommitMap
+          ( \(heads, wsBar) tail ->
+              (heads, wsBar, tail)
+          )
+          ( succeed (,)
+              |= repeat oneOrMore elem
+              |= blanks
+              |. symbol "|"
+          )
+          elem
+      )
+
+
+--     delayedCommitMap (\(heads, wsBar) tail -> listCombiner heads wsBar tail)
+--       ( succeed (,)
+--           |= sepByGeneral elemCombiner "" blanks1 oneOrMore parser
+--           |= blanks
+--           |. symbol "|"
+--       )
+--       ( succeed elemCombiner
+--           |= blanks
+--           |= parser
+--       )
+
 genericBlankList
-  : { generalContext : String
-    , listLiteralContext : String
-    , multiConsContext : String
-    , listLiteralCombiner : List a -> a
-    , multiConsCombiner : List a -> a -> a
-    , parser : Parser a
-    }
-  -> Parser a
+  :  { generalContext : String
+     , listLiteralContext : String
+     , multiConsContext : String
+     , listLiteralCombiner : WS -> List elem -> WS -> list
+     , multiConsCombiner : WS -> List elem -> WS -> elem -> WS -> list
+     , elem : Parser elem
+     }
+  -> Parser list
 genericBlankList args =
   inContext args.generalContext <|
-    bracketBlock <|
-      oneOf
-        [ multiConsInternal
-            args.multiConsContext
-            args.multiConsCombiner
-            args.parser
-        , listLiteralInternal
-            args.listLiteralContext
-            args.listLiteralCombiner
-            args.parser
-        ]
+    oneOf
+      [ blankMultiConsInternal
+          args.multiConsContext
+          args.multiConsCombiner
+          args.elem
+      , blankListLiteralInternal
+          args.listLiteralContext
+          args.listLiteralCombiner
+          args.elem
+      ]
 
 --==============================================================================
 --= CONSTANTS
@@ -372,8 +486,7 @@ type alias Identifier = String
 type Pattern
   = PIdentifier WS Identifier
   | PConstant WS Constant
-  | PList (List Pattern) (Maybe Pattern)
-  --| PList WS (List Pattern) WS (Maybe Pattern) WS
+  | PList WS (List Pattern) WS (Maybe Pattern) WS
   | PAs Identifier Pattern
 
 -- type Pattern
@@ -401,13 +514,23 @@ constantPattern =
 patternList : Parser Pattern
 patternList =
   lazy <| \_ ->
-    genericList
-      { generalContext = "pattern list"
-      , listLiteralContext = "pattern list literal"
-      , multiConsContext = "pattern multi cons literal"
-      , listLiteralCombiner = (\heads -> PList heads Nothing)
-      , multiConsCombiner = (\heads tail -> PList heads (Just tail))
-      , parser = pattern
+    genericBlankList
+      { generalContext =
+          "pattern list"
+      , listLiteralContext =
+          "pattern list literal"
+      , multiConsContext =
+          "pattern multi cons literal"
+      , listLiteralCombiner =
+          ( \wsStart heads wsEnd ->
+              PList wsStart heads "" Nothing wsEnd
+          )
+      , multiConsCombiner =
+          ( \wsStart heads wsBar tail wsEnd ->
+              PList wsStart heads wsBar (Just tail) wsEnd
+          )
+      , elem =
+          pattern
       }
 
 --------------------------------------------------------------------------------
