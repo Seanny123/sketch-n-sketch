@@ -328,7 +328,6 @@ numParser =
   in
     try <|
       succeed (\s n -> s * n)
-        |. spaces
         |= sign
         |= float
 
@@ -382,8 +381,7 @@ string =
           |. symbol quoteString
   in
     inContext "string" <|
-      delayedCommit spaces <|
-        oneOf <| List.map stringHelper ['\'', '"']
+      oneOf <| List.map stringHelper ['\'', '"']
 
 --------------------------------------------------------------------------------
 -- Bools
@@ -391,12 +389,10 @@ string =
 
 bool : Parser Constant
 bool =
-  delayedCommit spaces <|
-    oneOf
-      [ succeed (CBool True)
-          |. keyword "true"
-      , succeed (CBool False)
-          |. keyword "false"
+  map CBool <|
+    oneOf <|
+      [ map (always True) <| keyword "true"
+      , map (always False) <| keyword "false"
       ]
 
 --------------------------------------------------------------------------------
@@ -481,8 +477,8 @@ type Pattern
 -- Identifier Pattern
 --------------------------------------------------------------------------------
 
-identifier : Parser Pattern
-identifier =
+identifierPattern : Parser Pattern
+identifierPattern =
   delayedCommitMap PIdentifier blanks identifierString
 
 --------------------------------------------------------------------------------
@@ -548,7 +544,7 @@ pattern =
       [ lazy (\_ -> patternList)
       , lazy (\_ -> asPattern)
       , constantPattern
-      , identifier
+      , identifierPattern
       ]
 
 --==============================================================================
@@ -788,8 +784,8 @@ type LetKind
   = Let | Def
 
 type Exp
-  = EIdentifier Identifier
-  | EConstant Constant
+  = EIdentifier WS Identifier
+  | EConstant WS Constant
   | EOp0 Op0
   | EOp1 Op1 Exp
   | EOp2 Op2 Exp Exp
@@ -812,7 +808,7 @@ type Exp
 
 identifierExpression : Parser Exp
 identifierExpression =
-  map EIdentifier identifierString
+  delayedCommitMap EIdentifier blanks identifierString
 
 --------------------------------------------------------------------------------
 -- Constant Expressions
@@ -820,7 +816,7 @@ identifierExpression =
 
 constantExpression : Parser Exp
 constantExpression =
-  map EConstant constant
+  delayedCommitMap EConstant blanks constant
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
@@ -1080,7 +1076,7 @@ recursiveLetBinding =
       succeed (ELet Let True)
         |. keyword "letrec"
         |. spaces1
-        |= identifier
+        |= identifierPattern
         |. spaces1
         |= function
         |. spaces1
@@ -1106,7 +1102,7 @@ recursiveDefBinding =
       succeed (ELet Def True)
         |. keyword "defrec"
         |. spaces1
-        |= identifier
+        |= identifierPattern
         |. spaces1
         |= function
         |. closeBlock ")"
