@@ -571,24 +571,10 @@ type Type
   | TAlias WS Identifier
   | TFunction WS (List Type) WS
   | TList WS Type WS
-  -- heads / tail
   | TTuple WS (List Type) WS (Maybe Type) WS
   | TForall WS (OneOrMany (WS, Identifier)) Type WS
-  | TUnion (List Type)
-  | TWildcard
-
--- type Type
---   = TNull WS
---   | TNum WS
---   | TBool WS
---   | TString WS
---   | TAlias WS Identifier
---   | TFunction WS (List Type) WS
---   | TList WS Type WS
---   | TTuple WS (List Type) WS (Maybe Type) WS
---   | TForall WS (List Identifier) Type WS
---   | TUnion WS (List Type) WS
---   | TWildcard WS
+  | TUnion WS (List Type) WS
+  | TWildcard WS
 
 --------------------------------------------------------------------------------
 -- Base Types
@@ -715,24 +701,10 @@ unionType : Parser Type
 unionType =
   inContext "union type" <|
     lazy <| \_ ->
-      parenBlock <|
-        succeed TUnion
+      parenBlankBlock TUnion <|
+        succeed identity
           |. keyword "union"
-          |. spaces1
-          |= sepBySpaces oneOrMore typ
-
---unionType : Parser Type
---unionType =
---  let
---    separator =
---      succeed identity
---        |. spaces
---        |. symbol "|"
---  in
---    inContext "union type" <|
---      lazy <| \_ ->
---        succeed TUnion
---          |= sepBy separator oneOrMore typ
+          |= repeat oneOrMore typ
 
 --------------------------------------------------------------------------------
 -- Wildcard Type
@@ -741,9 +713,7 @@ unionType =
 wildcardType : Parser Type
 wildcardType =
   inContext "wildcard type" <|
-    delayedCommit spaces <|
-      succeed TWildcard
-        |. symbol "_"
+    delayedCommitMap (always << TWildcard) blanks (symbol "_")
 
 --------------------------------------------------------------------------------
 -- General Types
