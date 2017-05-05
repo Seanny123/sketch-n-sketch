@@ -188,13 +188,13 @@ closeBlankBlock closeSymbol =
 
 blankBlock : (WS -> a -> WS -> b) -> String -> String -> Parser a -> Parser b
 blankBlock combiner open close p =
-    delayedCommitMap
-      (\wsStart (result, wsEnd) -> combiner wsStart result wsEnd)
-      (openBlankBlock open)
-      ( succeed (,)
-          |= p
-          |= closeBlankBlock close
-      )
+  delayedCommitMap
+    (\wsStart (result, wsEnd) -> combiner wsStart result wsEnd)
+    (openBlankBlock open)
+    ( succeed (,)
+        |= p
+        |= closeBlankBlock close
+    )
 
 parenBlankBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
 parenBlankBlock combiner = blankBlock combiner "(" ")"
@@ -748,11 +748,9 @@ type FrozenState
 type Range
   = Range Float Float
 
-type Op0
+type Op
   = Pi
-
-type Op1
-  = Cos
+  | Cos
   | Sin
   | Arccos
   | Arcsin
@@ -762,9 +760,7 @@ type Op1
   | ToString
   | Sqrt
   | Explode
-
-type Op2
-  = Plus
+  | Plus
   | Minus
   | Multiply
   | Divide
@@ -786,9 +782,7 @@ type LetKind
 type Exp
   = EIdentifier WS Identifier
   | EConstant WS Constant
-  | EOp0 Op0
-  | EOp1 Op1 Exp
-  | EOp2 Op2 Exp Exp
+  | EOp WS Op (List Exp) WS
   | EIf Exp Exp Exp
   -- heads / tail
   | EList (List Exp) (Maybe Exp)
@@ -822,19 +816,14 @@ constantExpression =
 -- Primitive Operators
 --------------------------------------------------------------------------------
 
-op0 : Parser Exp
-op0 =
-  inContext "nullary operator" <|
-    delayedCommit spaces <|
-      succeed (EOp0 Pi)
-        |. keyword "pi"
-
-op1 : Parser Exp
-op1 =
+operator : Parser Exp
+operator =
   let
     op =
       oneOf
-        [ succeed Cos
+        [ succeed Pi
+          |. keyword "pi"
+        , succeed Cos
           |. keyword "cos"
         , succeed Sin
           |. keyword "sin"
@@ -854,23 +843,7 @@ op1 =
           |. keyword "sqrt"
         , succeed Explode
           |. keyword "explode"
-        ]
-  in
-    inContext "unary operator" <|
-      delayedCommitMap
-      (\op e -> EOp1 op e)
-      ( succeed identity
-          |= op
-          |. spaces1
-      )
-      exp
-
-op2 : Parser Exp
-op2 =
-  let
-    op =
-      oneOf
-        [ succeed Plus
+        , succeed Plus
           |. keyword "+"
         , succeed Minus
           |. keyword "-"
@@ -890,32 +863,14 @@ op2 =
           |. keyword "arctan2"
         ]
   in
-    inContext "binary operator" <|
-      delayedCommitMap
-      (\op (e1, e2) -> EOp2 op e1 e2)
-      ( succeed identity
-          |= op
-          |. spaces1
-      )
-      ( succeed (\e1 e2 -> (e1, e2))
-          |= exp
-          |. spaces1
-          |= exp
-      )
-
-operator : Parser Exp
-operator =
-  inContext "operator" <|
-    lazy <| \_ ->
-      let
-        inner =
-          oneOf
-            [ op0
-            , op1
-            , op2
-            ]
-      in
-        parenBlock inner
+    inContext "operator" <|
+      lazy <| \_ ->
+        parenBlankBlock
+          (\wsStart (op, args) wsEnd -> EOp wsStart op args wsEnd)
+          ( succeed (,)
+              |= op
+              |= repeat zeroOrMore exp
+          )
 
 --------------------------------------------------------------------------------
 -- Conditionals
