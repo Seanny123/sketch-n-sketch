@@ -770,11 +770,11 @@ type Op
   | Pow
   | Arctan2
 
-type CaseBranch
-  = CaseBranch Pattern Exp
+type Branch
+  = Branch WS Pattern Exp WS
 
-type TypeCaseBranch
-  = TypeCaseBranch Type Exp
+type TBranch
+  = TBranch WS Type Exp WS
 
 type LetKind
   = Let | Def
@@ -783,11 +783,11 @@ type Exp
   = EIdentifier WS Identifier
   | EConstant WS Constant
   | EOp WS Op (List Exp) WS
-  | EIf Exp Exp Exp
+  | EIf WS Exp Exp Exp WS
   -- heads / tail
-  | EList (List Exp) (Maybe Exp)
-  | ECase Exp (List CaseBranch)
-  | ETypeCase Pattern (List TypeCaseBranch)
+  | EList WS (List Exp) WS (Maybe Exp) WS
+  | ECase WS Exp (List Branch) WS
+  | ETypeCase WS Pattern (List TBranch) WS
   | EFunction (List Pattern) Exp
   | EFunctionApplication Exp (List Exp)
   -- type of let / recursive / pattern / value / inner
@@ -879,61 +879,75 @@ operator =
 conditional : Parser Exp
 conditional =
   inContext "conditional" <|
-      lazy <| \_ ->
-        parenBlock <|
-          succeed EIf
-            |. keyword "if"
-            |. spaces1
-            |= exp
-            |. spaces1
-            |= exp
-            |. spaces1
-            |= exp
+    lazy <| \_ ->
+      parenBlankBlock
+        (\wsStart (c, a, b) wsEnd -> EIf wsStart c a b wsEnd)
+        ( succeed (,,)
+           |. keyword "if "
+           |= exp
+           |= exp
+           |= exp
+        )
 
 --------------------------------------------------------------------------------
 -- Lists
 --------------------------------------------------------------------------------
--- TODO cleanup
-
--- listLiteralInternal : Parser Exp -> Parser Exp
--- listLiteralInternal elemParser =
---   inContext "list literal" <|
---     map (\heads -> EList heads Nothing) <|
---       sepBySpaces zeroOrMore elemParser
---
--- multiConsInternal : Parser Exp -> Parser Exp
--- multiConsInternal elemParser =
---   inContext "multi cons literal" <|
---     delayedCommitMap
---       (\heads tail -> EList heads (Just tail))
---       ( succeed identity
---           |= sepBySpaces oneOrMore elemParser
---           |. spaces
---           |. symbol "|"
---       )
---       elemParser
 
 list : Parser Exp
 list =
   lazy <| \_ ->
-    genericList
-      { generalContext = "list"
-      , listLiteralContext = "list literal"
-      , multiConsContext = "multi cons literal"
-      , listLiteralCombiner = (\heads -> EList heads Nothing)
-      , multiConsCombiner = (\heads tail -> EList heads (Just tail))
-      , parser = exp
+    genericBlankList
+      { generalContext =
+          "list"
+      , listLiteralContext =
+          "list literal"
+      , multiConsContext =
+          "multi cons literal"
+      , listLiteralCombiner =
+          ( \wsStart heads wsEnd ->
+              EList wsStart heads "" Nothing wsEnd
+          )
+      , multiConsCombiner =
+          ( \wsStart heads wsBar tail wsEnd ->
+              EList wsStart heads wsBar (Just tail) wsEnd
+          )
+      , elem =
+          exp
       }
 
---list : Parser Exp -> Parser Exp
---list elemParser =
---  inContext "list" <|
---    lazy <| \_ ->
---      bracketBlock <|
---        oneOf
---          [ multiConsInternal elemParser
---          , listLiteralInternal elemParser
---          ]
+--------------------------------------------------------------------------------
+-- Branch Helper
+--------------------------------------------------------------------------------
+
+genericCase
+  :  String
+  -> String
+  -> (WS -> a -> (List c) -> WS -> Exp)
+  -> (WS -> b -> Exp -> WS -> c)
+  -> Parser a
+  -> Parser b
+  -> Parser Exp
+genericCase context kword combiner branchCombiner parser branchParser =
+  let
+    path =
+      inContext (context ++ " path") <|
+        lazy <| \_ ->
+          parenBlankBlock
+            (\wsStart (p, e) wsEnd -> branchCombiner wsStart p e wsEnd)
+            ( succeed (,)
+                |= branchParser
+                |= exp
+            )
+  in
+    inContext context <|
+      lazy <| \_ ->
+        parenBlankBlock
+          (\wsStart (c, branches) wsEnd -> combiner wsStart c branches wsEnd)
+          ( succeed (,)
+              |. keyword (kword ++ " ")
+              |= parser
+              |= repeat zeroOrMore path
+          )
 
 --------------------------------------------------------------------------------
 -- Case Expressions
@@ -941,24 +955,8 @@ list =
 
 caseExpression : Parser Exp
 caseExpression =
-  let
-    casePath =
-      inContext "case expression path" <|
-        lazy <| \_ ->
-          parenBlock <|
-            succeed CaseBranch
-              |= pattern
-              |. spaces1
-              |= exp
-  in
-    inContext "case expression" <|
-      lazy <| \_ ->
-        parenBlock <|
-          succeed ECase
-            |. keyword "case"
-            |. spaces1
-            |= exp
-            |= sepBySpaces oneOrMore casePath
+  lazy <| \_ ->
+    genericCase "case expression" "case" ECase Branch exp pattern
 
 --------------------------------------------------------------------------------
 -- Type Case Expressions
@@ -966,24 +964,8 @@ caseExpression =
 
 typeCaseExpression : Parser Exp
 typeCaseExpression =
-  let
-    typeCasePath =
-      inContext "type case expression path" <|
-        lazy <| \_ ->
-          parenBlock <|
-            succeed TypeCaseBranch
-              |= typ
-              |. spaces1
-              |= exp
-  in
-    inContext "type case expression" <|
-      lazy <| \_ ->
-        parenBlock <|
-          succeed ETypeCase
-            |. keyword "typecase"
-            |. spaces1
-            |= pattern
-            |= sepBySpaces oneOrMore typeCasePath
+  lazy <| \_ ->
+    genericCase "type case expression" "typecase" ETypeCase TBranch pattern typ
 
 --------------------------------------------------------------------------------
 -- Functions
