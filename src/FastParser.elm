@@ -202,6 +202,15 @@ parenBlankBlock combiner = blankBlock combiner "(" ")"
 bracketBlankBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
 bracketBlankBlock combiner = blankBlock combiner "[" "]"
 
+blockIgnoreWS : String -> String -> Parser a -> Parser a
+blockIgnoreWS = blankBlock (\wsStart x wsEnd -> x)
+
+parenBlockIgnoreWS : Parser a -> Parser a
+parenBlockIgnoreWS = block "(" ")"
+
+bracketBlockIgnoreWS : Parser a -> Parser a
+bracketBlockIgnoreWS = block "[" "]"
+
 --------------------------------------------------------------------------------
 -- List Helper
 --------------------------------------------------------------------------------
@@ -788,8 +797,8 @@ type Exp
   | EList WS (List Exp) WS (Maybe Exp) WS
   | ECase WS Exp (List Branch) WS
   | ETypeCase WS Pattern (List TBranch) WS
-  | EFunction (List Pattern) Exp
-  | EFunctionApplication Exp (List Exp)
+  | EFunction WS (List Pattern) Exp WS
+  | EFunctionApplication WS Exp (List Exp) WS
   -- type of let / recursive / pattern / value / inner
   | ELet LetKind Bool Pattern Exp Exp
   | EOption String String
@@ -977,16 +986,20 @@ function =
     parameters =
       oneOf
         [ map singleton pattern
-        , parenBlock <| sepBySpaces oneOrMore pattern
+        , parenBlockIgnoreWS <| repeat oneOrMore pattern
         ]
   in
     inContext "function" <|
       lazy <| \_ ->
-        parenBlock <|
-          succeed EFunction
-            |. symbol "\\"
-            |= parameters
-            |= exp
+        parenBlankBlock
+          ( \wsStart (params, body) wsEnd ->
+              EFunction wsStart params body wsEnd
+          )
+          ( succeed (,)
+              |. symbol "\\"
+              |= parameters
+              |= exp
+          )
 
 --------------------------------------------------------------------------------
 -- Function Applications
@@ -996,11 +1009,14 @@ functionApplication : Parser Exp
 functionApplication =
   inContext "function application" <|
     lazy <| \_ ->
-      parenBlock <|
-        succeed EFunctionApplication
+      parenBlankBlock
+      ( \wsStart (f, x) wsEnd ->
+          EFunctionApplication wsStart f x wsEnd
+      )
+      ( succeed (,)
           |= exp
-          |. spaces1
-          |= sepBySpaces oneOrMore exp
+          |= repeat oneOrMore exp
+      )
 
 --------------------------------------------------------------------------------
 -- Let Bindings
