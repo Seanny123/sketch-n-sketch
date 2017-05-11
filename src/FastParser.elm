@@ -38,36 +38,24 @@ isSpace : Char -> Bool
 isSpace c =
   c == ' ' || c == '\n'
 
-blank : Parser WS
-blank =
-  keep (Exactly 1) isSpace
-
-blanks : Parser WS
-blanks =
+spaces : Parser WS
+spaces =
   keep zeroOrMore isSpace
-
-blanks1 : Parser WS
-blanks1 =
-  keep oneOrMore isSpace
-
-blankMap : (WS -> a -> b) -> Parser a -> Parser b
-blankMap combiner p =
-  delayedCommitMap combiner blanks p
 
 --------------------------------------------------------------------------------
 -- Block Helper
 --------------------------------------------------------------------------------
 
-openBlankBlock : String -> Parser WS
-openBlankBlock openSymbol =
+openBlock : String -> Parser WS
+openBlock openSymbol =
   succeed identity
-    |= blanks
+    |= spaces
     |. symbol openSymbol
 
-closeBlankBlock : String -> Parser WS
-closeBlankBlock closeSymbol =
+closeBlock : String -> Parser WS
+closeBlock closeSymbol =
   succeed identity
-    |= blanks
+    |= spaces
     |. symbol closeSymbol
 
 blankBlock : (WS -> a -> WS -> b) -> String -> String -> Parser a -> Parser b
@@ -76,17 +64,17 @@ blankBlock combiner open close p =
     ( \wsStart (result, wsEnd) ->
         combiner wsStart result wsEnd
     )
-    ( openBlankBlock open )
+    ( openBlock open )
     ( succeed (,)
         |= p
-        |= closeBlankBlock close
+        |= closeBlock close
     )
 
-parenBlankBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
-parenBlankBlock combiner = blankBlock combiner "(" ")"
+parenBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
+parenBlock combiner = blankBlock combiner "(" ")"
 
-bracketBlankBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
-bracketBlankBlock combiner = blankBlock combiner "[" "]"
+bracketBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
+bracketBlock combiner = blankBlock combiner "[" "]"
 
 blockIgnoreWS : String -> String -> Parser a -> Parser a
 blockIgnoreWS = blankBlock (\wsStart x wsEnd -> x)
@@ -105,7 +93,7 @@ blankListLiteralInternal
   : String -> (WS -> List elem -> WS -> list) -> Parser elem -> Parser list
 blankListLiteralInternal context combiner elem  =
   inContext context <|
-    bracketBlankBlock combiner (repeat zeroOrMore elem)
+    bracketBlock combiner (repeat zeroOrMore elem)
 
 blankMultiConsInternal
   :  String
@@ -114,7 +102,7 @@ blankMultiConsInternal
   -> Parser list
 blankMultiConsInternal context combiner elem =
   inContext context <|
-    bracketBlankBlock
+    bracketBlock
       ( \wsStart (heads, wsBar, tail) wsEnd ->
           combiner wsStart heads wsBar tail wsEnd
       )
@@ -124,13 +112,13 @@ blankMultiConsInternal context combiner elem =
           )
           ( succeed (,)
               |= repeat oneOrMore elem
-              |= blanks
+              |= spaces
               |. symbol "|"
           )
           elem
       )
 
-genericBlankList
+genericList
   :  { generalContext : String
      , listLiteralContext : String
      , multiConsContext : String
@@ -139,7 +127,7 @@ genericBlankList
      , elem : Parser elem
      }
   -> Parser list
-genericBlankList args =
+genericList args =
   inContext args.generalContext <|
     oneOf
       [ blankMultiConsInternal
@@ -327,7 +315,7 @@ type Pattern
 
 identifierPattern : Parser Pattern
 identifierPattern =
-  delayedCommitMap PIdentifier blanks identifierString
+  delayedCommitMap PIdentifier spaces identifierString
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
@@ -335,7 +323,7 @@ identifierPattern =
 
 constantPattern : Parser Pattern
 constantPattern =
-  delayedCommitMap PConstant blanks constant
+  delayedCommitMap PConstant spaces constant
 
 --------------------------------------------------------------------------------
 -- Pattern Lists
@@ -344,7 +332,7 @@ constantPattern =
 patternList : Parser Pattern
 patternList =
   lazy <| \_ ->
-    genericBlankList
+    genericList
       { generalContext =
           "pattern list"
       , listLiteralContext =
@@ -376,9 +364,9 @@ asPattern =
           PAs wsStart name wsAt pat
       )
       ( succeed (,,)
-          |= blanks
+          |= spaces
           |= identifierString
-          |= blanks
+          |= spaces
           |. symbol "@"
       )
       pattern
@@ -430,7 +418,7 @@ baseType : String -> (WS -> Type) -> String -> Parser Type
 baseType context combiner token =
   inContext context <|
     delayedCommitMap always
-      (map combiner blanks)
+      (map combiner spaces)
       (keyword token)
 
 nullType : Parser Type
@@ -456,7 +444,7 @@ stringType =
 aliasType : Parser Type
 aliasType =
   inContext "alias type" <|
-    delayedCommitMap TAlias blanks identifierString
+    delayedCommitMap TAlias spaces identifierString
 
 --------------------------------------------------------------------------------
 -- Function Type
@@ -466,7 +454,7 @@ functionType : Parser Type
 functionType =
   inContext "function type" <|
     lazy <| \_ ->
-      parenBlankBlock TFunction <|
+      parenBlock TFunction <|
         succeed identity
           |. keyword "->"
           |= repeat oneOrMore typ
@@ -479,7 +467,7 @@ listType : Parser Type
 listType =
   inContext "list type" <|
     lazy <| \_ ->
-      parenBlankBlock TList <|
+      parenBlock TList <|
         succeed identity
           |. keyword "List"
           |= typ
@@ -491,7 +479,7 @@ listType =
 tupleType : Parser Type
 tupleType =
   lazy <| \_ ->
-    genericBlankList
+    genericList
       { generalContext =
           "tuple type"
       , listLiteralContext =
@@ -518,19 +506,19 @@ forallType : Parser Type
 forallType =
   let
     wsIdentifierPair =
-      delayedCommitMap (,) blanks identifierString
+      delayedCommitMap (,) spaces identifierString
     quantifiers =
       oneOf
         [ inContext "forall type (one)" <|
             map One wsIdentifierPair
         , inContext "forall type (many) "<|
-            parenBlankBlock Many <|
+            parenBlock Many <|
               repeat zeroOrMore wsIdentifierPair
         ]
   in
     inContext "forall type" <|
       lazy <| \_ ->
-        parenBlankBlock
+        parenBlock
         ( \wsStart (qs, t) wsEnd -> TForall wsStart qs t wsEnd
         )
         ( succeed (,)
@@ -547,7 +535,7 @@ unionType : Parser Type
 unionType =
   inContext "union type" <|
     lazy <| \_ ->
-      parenBlankBlock TUnion <|
+      parenBlock TUnion <|
         succeed identity
           |. keyword "union"
           |= repeat oneOrMore typ
@@ -559,7 +547,7 @@ unionType =
 wildcardType : Parser Type
 wildcardType =
   inContext "wildcard type" <|
-    delayedCommitMap (always << TWildcard) blanks (symbol "_")
+    delayedCommitMap (always << TWildcard) spaces (symbol "_")
 
 --------------------------------------------------------------------------------
 -- General Types
@@ -652,7 +640,7 @@ type Exp
 
 identifierExpression : Parser Exp
 identifierExpression =
-  delayedCommitMap EIdentifier blanks identifierString
+  delayedCommitMap EIdentifier spaces identifierString
 
 --------------------------------------------------------------------------------
 -- Constant Expressions
@@ -660,7 +648,7 @@ identifierExpression =
 
 constantExpression : Parser Exp
 constantExpression =
-  delayedCommitMap EConstant blanks constant
+  delayedCommitMap EConstant spaces constant
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
@@ -715,7 +703,7 @@ operator =
   in
     inContext "operator" <|
       lazy <| \_ ->
-        parenBlankBlock
+        parenBlock
           ( \wsStart (op, args) wsEnd ->
               EOp wsStart op args wsEnd
           )
@@ -732,7 +720,7 @@ conditional : Parser Exp
 conditional =
   inContext "conditional" <|
     lazy <| \_ ->
-      parenBlankBlock
+      parenBlock
         ( \wsStart (c, a, b) wsEnd ->
             EIf wsStart c a b wsEnd
         )
@@ -750,7 +738,7 @@ conditional =
 list : Parser Exp
 list =
   lazy <| \_ ->
-    genericBlankList
+    genericList
       { generalContext =
           "list"
       , listLiteralContext =
@@ -786,7 +774,7 @@ genericCase context kword combiner branchCombiner parser branchParser =
     path =
       inContext (context ++ " path") <|
         lazy <| \_ ->
-          parenBlankBlock
+          parenBlock
             ( \wsStart (p, e) wsEnd ->
                 branchCombiner wsStart p e wsEnd
             )
@@ -797,7 +785,7 @@ genericCase context kword combiner branchCombiner parser branchParser =
   in
     inContext context <|
       lazy <| \_ ->
-        parenBlankBlock
+        parenBlock
           ( \wsStart (c, branches) wsEnd ->
               combiner wsStart c branches wsEnd
           )
@@ -840,7 +828,7 @@ function =
   in
     inContext "function" <|
       lazy <| \_ ->
-        parenBlankBlock
+        parenBlock
           ( \wsStart (params, body) wsEnd ->
               EFunction wsStart params body wsEnd
           )
@@ -858,7 +846,7 @@ functionApplication : Parser Exp
 functionApplication =
   inContext "function application" <|
     lazy <| \_ ->
-      parenBlankBlock
+      parenBlock
         ( \wsStart (f, x) wsEnd ->
             EFunctionApplication wsStart f x wsEnd
         )
@@ -874,7 +862,7 @@ functionApplication =
 genericLetBinding : String -> String -> Bool -> Parser Exp
 genericLetBinding context kword isRec =
   inContext context <|
-    parenBlankBlock
+    parenBlock
       ( \wsStart (pat, val, rest) wsEnd ->
           ELet wsStart Let isRec pat val rest wsEnd
       )
@@ -892,12 +880,12 @@ genericDefBinding context kword isRec =
       ( \wsStart (pat, val, wsEnd, rest) ->
           ELet wsStart Def isRec pat val rest wsEnd
       )
-      ( openBlankBlock "(" )
+      ( openBlock "(" )
       ( succeed (,,,)
           |. keyword (kword ++ " ")
           |= pattern
           |= exp
-          |= closeBlankBlock ")"
+          |= closeBlock ")"
           |= exp
       )
 
@@ -961,12 +949,12 @@ typeDeclaration =
       ( \wsStart (pat, t, wsEnd, rest) ->
           ETypeDeclaration wsStart pat t rest wsEnd
       )
-      ( openBlankBlock "(" )
+      ( openBlock "(" )
       ( succeed (,,,)
           |. keyword "typ "
-          |= pattern
+          |= identifierPattern
           |= typ
-          |= closeBlankBlock ")"
+          |= closeBlock ")"
           |= exp
       )
 
@@ -978,7 +966,7 @@ typeAnnotation : Parser Exp
 typeAnnotation =
   inContext "type annotation" <|
     lazy <| \_ ->
-      parenBlankBlock
+      parenBlock
         ( \wsStart (e, wsColon, t) wsEnd ->
             ETypeAnnotation wsStart e wsColon t wsEnd
         )
@@ -988,7 +976,7 @@ typeAnnotation =
             )
             ( succeed (,)
                 |= exp
-                |= blanks
+                |= spaces
                 |. symbol ":"
             )
             typ
