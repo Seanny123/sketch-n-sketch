@@ -28,68 +28,6 @@ try : Parser a -> Parser a
 try parser =
   delayedCommitMap always parser (succeed ())
 
-sepBy : Parser sep -> Count -> Parser a -> Parser (List a)
-sepBy separator count parser =
-  let
-    separatorThenParser =
-      delayedCommit separator parser
-  in
-    case count of
-      AtLeast n ->
-        let
-          otherOptions =
-            if n == 0 then
-              [ succeed [] ]
-            else
-              []
-        in
-          oneOf <|
-            [ succeed (\head tail -> head :: tail)
-                |= parser
-                |= repeat (AtLeast (n - 1)) separatorThenParser
-            ] ++ otherOptions
-      Exactly n ->
-        succeed (\head tail -> head :: tail)
-          |= parser
-          |= repeat (Exactly (n - 1)) separatorThenParser
-
----
-
-optional : Parser a -> a -> Parser a
-optional p default =
-  oneOf
-    [ p
-    , succeed default
-    ]
-
-sepByGeneral
-  : (sep -> a -> b) -> sep -> Parser sep -> Count -> Parser a -> Parser (List b)
-sepByGeneral combiner defaultSeparator separator count parser =
-  let
-    optionalSeparatorThenParser =
-      delayedCommitMap combiner (optional separator defaultSeparator) parser
-    separatorThenParser =
-      delayedCommitMap combiner separator parser
-  in
-    case count of
-      AtLeast n ->
-        let
-          otherOptions =
-            if n == 0 then
-              [ succeed [] ]
-            else
-              []
-        in
-          oneOf <|
-            [ succeed (\head tail -> head :: tail)
-                |= optionalSeparatorThenParser
-                |= repeat (AtLeast (n - 1)) separatorThenParser
-            ] ++ otherOptions
-      Exactly n ->
-        succeed (\head tail -> head :: tail)
-          |= optionalSeparatorThenParser
-          |= repeat (Exactly (n - 1)) separatorThenParser
-
 --------------------------------------------------------------------------------
 -- Whitespace
 --------------------------------------------------------------------------------
@@ -99,29 +37,6 @@ type alias WS = String
 isSpace : Char -> Bool
 isSpace c =
   c == ' ' || c == '\n'
-
-space : Parser ()
-space =
-  ignore (Exactly 1) isSpace
-
-spaces : Parser ()
-spaces =
-  whitespace
-    { allowTabs = False
-    , lineComment = LineComment ";"
-    , multiComment = NoMultiComment
-    }
-
-spaces1 : Parser ()
-spaces1 =
-  succeed identity
-    |= space
-    |. spaces
-
-sepBySpaces : Count -> Parser a -> Parser (List a)
-sepBySpaces = sepBy spaces1
-
----
 
 blank : Parser WS
 blank =
@@ -135,9 +50,6 @@ blanks1 : Parser WS
 blanks1 =
   keep oneOrMore isSpace
 
-sepByBlanks : Count -> Parser a -> Parser (List a)
-sepByBlanks = sepBy spaces1
-
 blankMap : (WS -> a -> b) -> Parser a -> Parser b
 blankMap combiner p =
   delayedCommitMap combiner blanks p
@@ -145,34 +57,6 @@ blankMap combiner p =
 --------------------------------------------------------------------------------
 -- Block Helper
 --------------------------------------------------------------------------------
-
-openBlock : String -> Parser ()
-openBlock openSymbol =
-  succeed identity
-    |. spaces
-    |= symbol openSymbol
-    |. spaces
-
-closeBlock : String -> Parser ()
-closeBlock closeSymbol =
-  succeed identity
-    |. spaces
-    |= symbol closeSymbol
-
-block : String -> String -> Parser a -> Parser a
-block open close p =
-  delayedCommit (openBlock open) <|
-    succeed identity
-      |= p
-      |. closeBlock close
-
-parenBlock : Parser a -> Parser a
-parenBlock = block "(" ")"
-
-bracketBlock : Parser a -> Parser a
-bracketBlock = block "[" "]"
-
----
 
 openBlankBlock : String -> Parser WS
 openBlankBlock openSymbol =
@@ -208,56 +92,14 @@ blockIgnoreWS : String -> String -> Parser a -> Parser a
 blockIgnoreWS = blankBlock (\wsStart x wsEnd -> x)
 
 parenBlockIgnoreWS : Parser a -> Parser a
-parenBlockIgnoreWS = block "(" ")"
+parenBlockIgnoreWS = blockIgnoreWS "(" ")"
 
 bracketBlockIgnoreWS : Parser a -> Parser a
-bracketBlockIgnoreWS = block "[" "]"
+bracketBlockIgnoreWS = blockIgnoreWS "[" "]"
 
 --------------------------------------------------------------------------------
 -- List Helper
 --------------------------------------------------------------------------------
-
-listLiteralInternal : String -> (List a -> a) -> Parser a -> Parser a
-listLiteralInternal context combiner parser  =
-  inContext context <|
-    succeed combiner
-      |= sepBySpaces zeroOrMore parser
-
-multiConsInternal : String -> (List a -> a -> a) -> Parser a -> Parser a
-multiConsInternal context combiner parser =
-  inContext context <|
-    delayedCommitMap combiner
-      ( succeed identity
-          |= sepBySpaces oneOrMore parser
-          |. spaces
-          |. symbol "|"
-      )
-      parser
-
-genericList
-  : { generalContext : String
-    , listLiteralContext : String
-    , multiConsContext : String
-    , listLiteralCombiner : List a -> a
-    , multiConsCombiner : List a -> a -> a
-    , parser : Parser a
-    }
-  -> Parser a
-genericList args =
-  inContext args.generalContext <|
-    bracketBlock <|
-      oneOf
-        [ multiConsInternal
-            args.multiConsContext
-            args.multiConsCombiner
-            args.parser
-        , listLiteralInternal
-            args.listLiteralContext
-            args.listLiteralCombiner
-            args.parser
-        ]
-
----
 
 blankListLiteralInternal
   : String -> (WS -> List elem -> WS -> list) -> Parser elem -> Parser list
@@ -458,11 +300,6 @@ keywords =
     , "defrec"
     , "typ"
     ]
-
--- identifierString : Parser Identifier
--- identifierString =
---   delayedCommit spaces <|
---     variable validIdentifierFirstChar validIdentifierRestChar keywords
 
 identifierString : Parser Identifier
 identifierString =
