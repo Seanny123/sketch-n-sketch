@@ -379,8 +379,8 @@ pattern : Parser Pattern
 pattern =
   inContext "pattern" <|
     oneOf
-      [ lazy (\_ -> patternList)
-      , lazy (\_ -> asPattern)
+      [ lazy <| \_ -> patternList
+      , lazy <| \_ -> asPattern
       , constantPattern
       , identifierPattern
       ]
@@ -562,11 +562,11 @@ typ =
       , boolType
       , stringType
       , wildcardType
-      , lazy (\_ -> functionType)
-      , lazy (\_ -> listType)
-      , lazy (\_ -> tupleType)
-      , lazy (\_ -> forallType)
-      , lazy (\_ -> unionType)
+      , lazy <| \_ -> functionType
+      , lazy <| \_ -> listType
+      , lazy <| \_ -> tupleType
+      , lazy <| \_ -> forallType
+      , lazy <| \_ -> unionType
       , aliasType
       ]
 
@@ -630,9 +630,10 @@ type Exp
   | EFunctionApplication WS Exp (List Exp) WS
   -- type of let / recursive / pattern / value / inner
   | ELet WS LetKind Bool Pattern Exp Exp WS
-  | EOption String String
   | ETypeDeclaration WS Pattern Type Exp WS
   | ETypeAnnotation WS Exp WS Type WS
+  | EComment WS String Exp
+  | EOption String String
 
 --------------------------------------------------------------------------------
 -- Identifier Expressions
@@ -924,7 +925,7 @@ letBinding =
 -- Options
 --------------------------------------------------------------------------------
 
--- TODO fix options (and comments!)
+-- TODO fix options
 
 validOptionChar : Char -> Bool
 validOptionChar c =
@@ -959,7 +960,7 @@ typeDeclaration =
       )
 
 --------------------------------------------------------------------------------
--- Type Annotation
+-- Type Annotations
 --------------------------------------------------------------------------------
 
 typeAnnotation : Parser Exp
@@ -983,6 +984,26 @@ typeAnnotation =
         )
 
 --------------------------------------------------------------------------------
+-- Comments
+--------------------------------------------------------------------------------
+
+comment : Parser Exp
+comment =
+  inContext "comment" <|
+    lazy <| \_ ->
+      delayedCommitMap
+        ( \wsStart (text, rest) ->
+            EComment wsStart text rest
+        )
+        spaces
+        ( succeed (,)
+            |. symbol ";"
+            |= keep zeroOrMore (\c -> c /= '\n')
+            |. symbol "\n"
+            |= exp
+        )
+
+--------------------------------------------------------------------------------
 -- General Expressions
 --------------------------------------------------------------------------------
 
@@ -991,16 +1012,17 @@ exp =
   inContext "expression" <|
     oneOf
       [ constantExpression
-      , lazy (\_ -> operator)
-      , lazy (\_ -> conditional)
-      , lazy (\_ -> letBinding)
-      , lazy (\_ -> caseExpression)
-      , lazy (\_ -> typeCaseExpression)
-      , lazy (\_ -> typeDeclaration)
-      , lazy (\_ -> typeAnnotation)
-      , lazy (\_ -> list)
-      , lazy (\_ -> function)
-      , lazy (\_ -> functionApplication)
+      , lazy <| \_ -> operator
+      , lazy <| \_ -> conditional
+      , lazy <| \_ -> letBinding
+      , lazy <| \_ -> caseExpression
+      , lazy <| \_ -> typeCaseExpression
+      , lazy <| \_ -> typeDeclaration
+      , lazy <| \_ -> typeAnnotation
+      , lazy <| \_ -> list
+      , lazy <| \_ -> function
+      , lazy <| \_ -> functionApplication
+      , lazy <| \_ -> comment
       , identifierExpression
       ]
 
