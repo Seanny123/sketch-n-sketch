@@ -800,7 +800,7 @@ type Exp
   | EFunction WS (List Pattern) Exp WS
   | EFunctionApplication WS Exp (List Exp) WS
   -- type of let / recursive / pattern / value / inner
-  | ELet LetKind Bool Pattern Exp Exp
+  | ELet WS LetKind Bool Pattern Exp Exp WS
   | EOption String String
   | ETypeDeclaration Pattern Type Exp
   | ETypeAnnotation Exp Type
@@ -1010,71 +1010,67 @@ functionApplication =
   inContext "function application" <|
     lazy <| \_ ->
       parenBlankBlock
-      ( \wsStart (f, x) wsEnd ->
-          EFunctionApplication wsStart f x wsEnd
-      )
-      ( succeed (,)
-          |= exp
-          |= repeat oneOrMore exp
-      )
+        ( \wsStart (f, x) wsEnd ->
+            EFunctionApplication wsStart f x wsEnd
+        )
+        ( succeed (,)
+            |= exp
+            |= repeat oneOrMore exp
+        )
 
 --------------------------------------------------------------------------------
 -- Let Bindings
 --------------------------------------------------------------------------------
 
+genericLetBinding : String -> String -> Bool -> Parser Exp
+genericLetBinding context kword isRec =
+  inContext context <|
+    parenBlankBlock
+      ( \wsStart (pat, val, rest) wsEnd ->
+          ELet wsStart Let isRec pat val rest wsEnd
+      )
+      ( succeed (,,)
+          |. keyword (kword ++ " ")
+          |= identifierPattern
+          |= exp
+          |= exp
+      )
+
+genericDefBinding : String -> String -> Bool -> Parser Exp
+genericDefBinding context kword isRec =
+  inContext context <|
+    delayedCommitMap
+      ( \wsStart (pat, val, wsEnd, rest) ->
+          ELet wsStart Def isRec pat val rest wsEnd
+      )
+      (openBlankBlock "(")
+      ( succeed (,,,)
+          |. keyword (kword ++ " ")
+          |= identifierPattern
+          |= exp
+          |= closeBlankBlock ")"
+          |= exp
+      )
+
 recursiveLetBinding : Parser Exp
 recursiveLetBinding =
-  inContext "recursive let binding" <|
-    parenBlock <|
-      succeed (ELet Let True)
-        |. keyword "letrec"
-        |. spaces1
-        |= identifierPattern
-        |. spaces1
-        |= function
-        |. spaces1
-        |= exp
+  lazy <| \_ ->
+    genericLetBinding "recursive let binding" "letrec" True
 
 simpleLetBinding : Parser Exp
 simpleLetBinding =
-  inContext "non-recursive let binding" <|
-    parenBlock <|
-      succeed (ELet Let False)
-        |. keyword "let"
-        |. spaces1
-        |= pattern
-        |. spaces1
-        |= exp
-        |. spaces1
-        |= exp
+  lazy <| \_ ->
+    genericLetBinding "non-recursive let binding" "let" False
 
 recursiveDefBinding : Parser Exp
 recursiveDefBinding =
-  inContext "recursive def binding" <|
-    delayedCommit (openBlock "(") <|
-      succeed (ELet Def True)
-        |. keyword "defrec"
-        |. spaces1
-        |= identifierPattern
-        |. spaces1
-        |= function
-        |. closeBlock ")"
-        |. spaces1
-        |= exp
+  lazy <| \_ ->
+    genericDefBinding "recursive def binding" "defrec" True
 
 simpleDefBinding : Parser Exp
 simpleDefBinding =
-  inContext "non-recursive def binding" <|
-    delayedCommit (openBlock "(") <|
-      succeed (ELet Def False)
-        |. keyword "def"
-        |. spaces1
-        |= pattern
-        |. spaces1
-        |= exp
-        |. closeBlock ")"
-        |. spaces1
-        |= exp
+  lazy <| \_ ->
+    genericDefBinding "non-recursive def binding" "def" False
 
 letBinding : Parser Exp
 letBinding =
