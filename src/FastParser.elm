@@ -880,7 +880,7 @@ genericLetBinding context kword isRec =
       )
       ( succeed (,,)
           |. keyword (kword ++ " ")
-          |= identifierPattern
+          |= pattern
           |= exp
           |= exp
       )
@@ -895,7 +895,7 @@ genericDefBinding context kword isRec =
       ( openBlankBlock "(" )
       ( succeed (,,,)
           |. keyword (kword ++ " ")
-          |= identifierPattern
+          |= pattern
           |= exp
           |= closeBlankBlock ")"
           |= exp
@@ -964,7 +964,7 @@ typeDeclaration =
       ( openBlankBlock "(" )
       ( succeed (,,,)
           |. keyword "typ "
-          |= identifierPattern
+          |= pattern
           |= typ
           |= closeBlankBlock ")"
           |= exp
