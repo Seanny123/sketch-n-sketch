@@ -189,8 +189,10 @@ closeBlankBlock closeSymbol =
 blankBlock : (WS -> a -> WS -> b) -> String -> String -> Parser a -> Parser b
 blankBlock combiner open close p =
   delayedCommitMap
-    (\wsStart (result, wsEnd) -> combiner wsStart result wsEnd)
-    (openBlankBlock open)
+    ( \wsStart (result, wsEnd) ->
+        combiner wsStart result wsEnd
+    )
+    ( openBlankBlock open )
     ( succeed (,)
         |= p
         |= closeBlankBlock close
@@ -533,7 +535,9 @@ asPattern =
   inContext "as pattern" <|
     lazy <| \_ ->
       delayedCommitMap
-      (\(wsStart, name, wsAt) pat -> PAs wsStart name wsAt pat)
+      ( \(wsStart, name, wsAt) pat ->
+          PAs wsStart name wsAt pat
+      )
       ( succeed (,,)
           |= blanks
           |= identifierString
@@ -802,8 +806,8 @@ type Exp
   -- type of let / recursive / pattern / value / inner
   | ELet WS LetKind Bool Pattern Exp Exp WS
   | EOption String String
-  | ETypeDeclaration Pattern Type Exp
-  | ETypeAnnotation Exp Type
+  | ETypeDeclaration WS Pattern Type Exp WS
+  | ETypeAnnotation WS Exp WS Type WS
 
 --------------------------------------------------------------------------------
 -- Identifier Expressions
@@ -875,7 +879,9 @@ operator =
     inContext "operator" <|
       lazy <| \_ ->
         parenBlankBlock
-          (\wsStart (op, args) wsEnd -> EOp wsStart op args wsEnd)
+          ( \wsStart (op, args) wsEnd ->
+              EOp wsStart op args wsEnd
+          )
           ( succeed (,)
               |= op
               |= repeat zeroOrMore exp
@@ -890,7 +896,9 @@ conditional =
   inContext "conditional" <|
     lazy <| \_ ->
       parenBlankBlock
-        (\wsStart (c, a, b) wsEnd -> EIf wsStart c a b wsEnd)
+        ( \wsStart (c, a, b) wsEnd ->
+            EIf wsStart c a b wsEnd
+        )
         ( succeed (,,)
            |. keyword "if "
            |= exp
@@ -942,7 +950,9 @@ genericCase context kword combiner branchCombiner parser branchParser =
       inContext (context ++ " path") <|
         lazy <| \_ ->
           parenBlankBlock
-            (\wsStart (p, e) wsEnd -> branchCombiner wsStart p e wsEnd)
+            ( \wsStart (p, e) wsEnd ->
+                branchCombiner wsStart p e wsEnd
+            )
             ( succeed (,)
                 |= branchParser
                 |= exp
@@ -951,7 +961,9 @@ genericCase context kword combiner branchCombiner parser branchParser =
     inContext context <|
       lazy <| \_ ->
         parenBlankBlock
-          (\wsStart (c, branches) wsEnd -> combiner wsStart c branches wsEnd)
+          ( \wsStart (c, branches) wsEnd ->
+              combiner wsStart c branches wsEnd
+          )
           ( succeed (,)
               |. keyword (kword ++ " ")
               |= parser
@@ -1043,7 +1055,7 @@ genericDefBinding context kword isRec =
       ( \wsStart (pat, val, wsEnd, rest) ->
           ELet wsStart Def isRec pat val rest wsEnd
       )
-      (openBlankBlock "(")
+      ( openBlankBlock "(" )
       ( succeed (,,,)
           |. keyword (kword ++ " ")
           |= identifierPattern
@@ -1108,17 +1120,18 @@ option =
 typeDeclaration : Parser Exp
 typeDeclaration =
   inContext "type declaration" <|
-    lazy <| \_ ->
-      delayedCommit (openBlock "(") <|
-        succeed ETypeDeclaration
-          |. keyword "typ"
-          |. spaces1
-          |= pattern
-          |. spaces1
+    delayedCommitMap
+      ( \wsStart (pat, t, wsEnd, rest) ->
+          ETypeDeclaration wsStart pat t rest wsEnd
+      )
+      ( openBlankBlock "(" )
+      ( succeed (,,,)
+          |. keyword "typ "
+          |= identifierPattern
           |= typ
-          |. closeBlock ")"
-          |. spaces1
+          |= closeBlankBlock ")"
           |= exp
+      )
 
 --------------------------------------------------------------------------------
 -- Type Annotation
@@ -1128,16 +1141,21 @@ typeAnnotation : Parser Exp
 typeAnnotation =
   inContext "type annotation" <|
     lazy <| \_ ->
-      parenBlock <|
-        delayedCommitMap
-        (\e t -> ETypeAnnotation e t)
-        ( succeed identity
-            |= exp
-            |. spaces
-            |. symbol ":"
+      parenBlankBlock
+        ( \wsStart (e, wsColon, t) wsEnd ->
+            ETypeAnnotation wsStart e wsColon t wsEnd
         )
-        typ
-
+        ( delayedCommitMap
+            ( \(e, wsColon) t ->
+                (e, wsColon, t)
+            )
+            ( succeed (,)
+                |= exp
+                |= blanks
+                |. symbol ":"
+            )
+            typ
+        )
 
 --------------------------------------------------------------------------------
 -- General Expressions
