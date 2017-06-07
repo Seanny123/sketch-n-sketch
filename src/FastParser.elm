@@ -8,6 +8,7 @@ import Set exposing (Set)
 
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
+import Parser.LowLevel exposing (getPosition)
 
 --==============================================================================
 --= HELPERS
@@ -58,8 +59,8 @@ closeBlock closeSymbol =
     |= spaces
     |. symbol closeSymbol
 
-blankBlock : (WS -> a -> WS -> b) -> String -> String -> Parser a -> Parser b
-blankBlock combiner open close p =
+block : (WS -> a -> WS -> b) -> String -> String -> Parser a -> Parser b
+block combiner open close p =
   delayedCommitMap
     ( \wsStart (result, wsEnd) ->
         combiner wsStart result wsEnd
@@ -71,13 +72,13 @@ blankBlock combiner open close p =
     )
 
 parenBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
-parenBlock combiner = blankBlock combiner "(" ")"
+parenBlock combiner = block combiner "(" ")"
 
 bracketBlock : (WS -> a -> WS -> b) -> Parser a -> Parser b
-bracketBlock combiner = blankBlock combiner "[" "]"
+bracketBlock combiner = block combiner "[" "]"
 
 blockIgnoreWS : String -> String -> Parser a -> Parser a
-blockIgnoreWS = blankBlock (\wsStart x wsEnd -> x)
+blockIgnoreWS = block (\wsStart x wsEnd -> x)
 
 parenBlockIgnoreWS : Parser a -> Parser a
 parenBlockIgnoreWS = blockIgnoreWS "(" ")"
@@ -141,6 +142,103 @@ genericList args =
       ]
 
 --==============================================================================
+--= POSITION INFO
+--==============================================================================
+
+--------------------------------------------------------------------------------
+-- Pos
+--------------------------------------------------------------------------------
+
+type alias Pos =
+  { line : Int
+  , col : Int
+  }
+
+startPos : Pos
+startPos =
+  { line = 1
+  , col = 1
+  }
+
+dummyPos : Pos
+dummyPos =
+  { line = -1
+  , col = -1
+  }
+
+posFromRowCol : (Int, Int) -> Pos
+posFromRowCol (row, col) =
+  { line = row
+  , col = col
+  }
+
+--------------------------------------------------------------------------------
+-- WithPos
+--------------------------------------------------------------------------------
+
+type alias WithPos a =
+  { val : a
+  , pos : Pos
+  }
+
+getPos : Parser Pos
+getPos =
+  map posFromRowCol getPosition
+
+--------------------------------------------------------------------------------
+-- WithInfo
+--------------------------------------------------------------------------------
+
+type alias WithInfo a =
+  { val : a
+  , start : Pos
+  , end : Pos
+  }
+
+withInfo : a -> Pos -> Pos -> WithInfo a
+withInfo x start end =
+  { val = x
+  , start = start
+  , end = end
+  }
+
+mapInfo : (a -> b) -> WithInfo a -> WithInfo b
+mapInfo f w =
+  { w | val = f w.val }
+
+trackInfo : Parser a -> Parser (WithInfo a)
+trackInfo p =
+  delayedCommitMap
+    ( \start (a, end) ->
+        withInfo a start end
+    )
+    getPos
+    ( succeed (,)
+        |= p
+        |= getPos
+    )
+
+untrackInfo : Parser (WithInfo a) -> Parser a
+untrackInfo = map (.val)
+
+-- TODO remove
+--delayedCommitMapWI
+--  : (a -> b -> value) -> Parser a -> Parser b -> Parser (WithInfo value)
+--delayedCommitMapWI combiner pa pb =
+--  delayedCommitMap
+--    ( \(start, a) (b, end) ->
+--        withInfo (combiner a b) start end
+--    )
+--    ( succeed (,)
+--        |= getPos
+--        |= pa
+--    )
+--    ( succeed (,)
+--        |= pb
+--        |= getPos
+--    )
+
+--==============================================================================
 --= CONSTANTS
 --==============================================================================
 
@@ -172,75 +270,78 @@ numParser =
         |= sign
         |= float
 
-number : Parser Constant
+number : Parser (WithInfo Constant)
 number =
-  let
-    frozenAnnotation =
-      inContext "frozen annotation" <|
-        oneOf
-          [ succeed Frozen
-              |. symbol "!"
-          , succeed Thawed
-              |. symbol "?"
-          , succeed Restricted
-              |. symbol "~"
-          , succeed Thawed -- default
-          ]
-    rangeAnnotation =
-      inContext "range annotation" <|
-        oneOf
-          [ map Just <|
-              succeed Range
-                |. symbol "{"
-                |= numParser
-                |. symbol "-"
-                |= numParser
-                |. symbol "}"
-          , succeed Nothing
-          ]
-  in
-    inContext "number" <|
-      succeed (\val frozen range -> CNumber frozen range val)
-        |= try numParser
-        |= frozenAnnotation
-        |= rangeAnnotation
+  trackInfo <|
+    let
+      frozenAnnotation =
+        inContext "frozen annotation" <|
+          oneOf
+            [ succeed Frozen
+                |. symbol "!"
+            , succeed Thawed
+                |. symbol "?"
+            , succeed Restricted
+                |. symbol "~"
+            , succeed Thawed -- default
+            ]
+      rangeAnnotation =
+        inContext "range annotation" <|
+          oneOf
+            [ map Just <|
+                succeed Range
+                  |. symbol "{"
+                  |= numParser
+                  |. symbol "-"
+                  |= numParser
+                  |. symbol "}"
+            , succeed Nothing
+            ]
+    in
+      inContext "number" <|
+        succeed (\val frozen range -> CNumber frozen range val)
+          |= try numParser
+          |= frozenAnnotation
+          |= rangeAnnotation
 
 --------------------------------------------------------------------------------
 -- Strings
 --------------------------------------------------------------------------------
 
-string : Parser Constant
+string : Parser (WithInfo Constant)
 string =
-  let
-    stringHelper quoteChar =
-      let
-        quoteString = fromChar quoteChar
-      in
-        succeed CString
-          |. symbol quoteString
-          |= keep zeroOrMore (\c -> c /= quoteChar)
-          |. symbol quoteString
-  in
-    inContext "string" <|
-      oneOf <| List.map stringHelper ['\'', '"']
+  trackInfo <|
+    let
+      stringHelper quoteChar =
+        let
+          quoteString = fromChar quoteChar
+        in
+          succeed CString
+            |. symbol quoteString
+            |= keep zeroOrMore (\c -> c /= quoteChar)
+            |. symbol quoteString
+    in
+      inContext "string" <|
+        oneOf <| List.map stringHelper ['\'', '"'] -- " -- fix syntax highlighting
 
 --------------------------------------------------------------------------------
 -- Bools
 --------------------------------------------------------------------------------
 
-bool : Parser Constant
+bool : Parser (WithInfo Constant)
 bool =
-  map CBool <|
-    oneOf <|
-      [ map (always True) <| keyword "true"
-      , map (always False) <| keyword "false"
-      ]
+  trackInfo <|
+    map CBool <|
+      oneOf <|
+        [ map (always True) <| keyword "true"
+        , map (always False) <| keyword "false"
+        ]
 
 --------------------------------------------------------------------------------
 -- General Constants
 --------------------------------------------------------------------------------
 
-constant : Parser Constant
+constant : Parser (WithInfo Constant)
 constant =
   oneOf
     [ number
@@ -289,9 +390,10 @@ keywords =
     , "typ"
     ]
 
-identifierString : Parser Identifier
+identifierString : Parser (WithInfo Identifier)
 identifierString =
-  variable validIdentifierFirstChar validIdentifierRestChar keywords
+  trackInfo <|
+    variable validIdentifierFirstChar validIdentifierRestChar keywords
 
 --==============================================================================
 --= PATTERNS
@@ -303,79 +405,93 @@ identifierString =
 
 type alias Identifier = String
 
-type Pattern
+type Pat__
   = PIdentifier WS Identifier
   | PConstant WS Constant
-  | PList WS (List Pattern) WS (Maybe Pattern) WS
-  | PAs WS Identifier WS Pattern
+  | PList WS (List Pat) WS (Maybe Pat) WS
+  | PAs WS Identifier WS Pat
+
+type alias PId  = Int
+type alias Pat_ = { p__ : Pat__, pid : PId  }
+type alias Pat = WithInfo Pat_
+
+pat_ : Pat__ -> Pat_
+pat_ p = { p__ = p, pid = -1 }
+
+mapPat_ : Parser Pat__ -> Parser Pat_
+mapPat_ = map pat_
 
 --------------------------------------------------------------------------------
 -- Identifier Pattern
 --------------------------------------------------------------------------------
 
-identifierPattern : Parser Pattern
+identifierPattern : Parser Pat
 identifierPattern =
-  delayedCommitMap PIdentifier spaces identifierString
+  trackInfo << mapPat_ <|
+    delayedCommitMap PIdentifier spaces (untrackInfo identifierString)
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
 --------------------------------------------------------------------------------
 
-constantPattern : Parser Pattern
+constantPattern : Parser Pat
 constantPattern =
-  delayedCommitMap PConstant spaces constant
+  trackInfo << mapPat_ <|
+    delayedCommitMap PConstant spaces (untrackInfo constant)
 
 --------------------------------------------------------------------------------
 -- Pattern Lists
 --------------------------------------------------------------------------------
 
-patternList : Parser Pattern
+patternList : Parser Pat
 patternList =
-  lazy <| \_ ->
-    genericList
-      { generalContext =
-          "pattern list"
-      , listLiteralContext =
-          "pattern list literal"
-      , multiConsContext =
-          "pattern multi cons literal"
-      , listLiteralCombiner =
-          ( \wsStart heads wsEnd ->
-              PList wsStart heads "" Nothing wsEnd
-          )
-      , multiConsCombiner =
-          ( \wsStart heads wsBar tail wsEnd ->
-              PList wsStart heads wsBar (Just tail) wsEnd
-          )
-      , elem =
-          pattern
-      }
+  trackInfo << mapPat_ <|
+    lazy <| \_ ->
+      genericList
+        { generalContext =
+            "pattern list"
+        , listLiteralContext =
+            "pattern list literal"
+        , multiConsContext =
+            "pattern multi cons literal"
+        , listLiteralCombiner =
+            ( \wsStart heads wsEnd ->
+                PList wsStart heads "" Nothing wsEnd
+            )
+        , multiConsCombiner =
+            ( \wsStart heads wsBar tail wsEnd ->
+                PList wsStart heads wsBar (Just tail) wsEnd
+            )
+        , elem =
+            pattern
+        }
 
 --------------------------------------------------------------------------------
 -- As-Patterns (@-Patterns)
 --------------------------------------------------------------------------------
 
-asPattern : Parser Pattern
+asPattern : Parser Pat
 asPattern =
-  inContext "as pattern" <|
-    lazy <| \_ ->
-      delayedCommitMap
-      ( \(wsStart, name, wsAt) pat ->
-          PAs wsStart name wsAt pat
-      )
-      ( succeed (,,)
-          |= spaces
-          |= identifierString
-          |= spaces
-          |. symbol "@"
-      )
-      pattern
+  trackInfo << mapPat_ <|
+    inContext "as pattern" <|
+      lazy <| \_ ->
+        delayedCommitMap
+        ( \(wsStart, name, wsAt) pat ->
+            PAs wsStart name wsAt pat
+        )
+        ( succeed (,,)
+            |= spaces
+            |= untrackInfo identifierString
+            |= spaces
+            |. symbol "@"
+        )
+        pattern
 
 --------------------------------------------------------------------------------
 -- General Patterns
 --------------------------------------------------------------------------------
 
-pattern : Parser Pattern
+pattern : Parser Pat
 pattern =
   inContext "pattern" <|
     oneOf
@@ -444,7 +560,7 @@ stringType =
 aliasType : Parser Type
 aliasType =
   inContext "alias type" <|
-    delayedCommitMap TAlias spaces identifierString
+    delayedCommitMap TAlias spaces (untrackInfo identifierString)
 
 --------------------------------------------------------------------------------
 -- Function Type
@@ -506,7 +622,7 @@ forallType : Parser Type
 forallType =
   let
     wsIdentifierPair =
-      delayedCommitMap (,) spaces identifierString
+      delayedCommitMap (,) spaces (untrackInfo identifierString)
     quantifiers =
       oneOf
         [ inContext "forall type (one)" <|
@@ -519,13 +635,14 @@ forallType =
     inContext "forall type" <|
       lazy <| \_ ->
         parenBlock
-        ( \wsStart (qs, t) wsEnd -> TForall wsStart qs t wsEnd
-        )
-        ( succeed (,)
-            |. keyword "forall"
-            |= quantifiers
-            |= typ
-        )
+          ( \wsStart (qs, t) wsEnd ->
+              TForall wsStart qs t wsEnd
+          )
+          ( succeed (,)
+              |. keyword "forall"
+              |= quantifiers
+              |= typ
+          )
 
 --------------------------------------------------------------------------------
 -- Union Type
@@ -609,7 +726,7 @@ type Op
   | Arctan2
 
 type Branch
-  = Branch WS Pattern Exp WS
+  = Branch WS Pat Exp WS
 
 type TBranch
   = TBranch WS Type Exp WS
@@ -625,12 +742,12 @@ type Exp
   -- heads / tail
   | EList WS (List Exp) WS (Maybe Exp) WS
   | ECase WS Exp (List Branch) WS
-  | ETypeCase WS Pattern (List TBranch) WS
-  | EFunction WS (List Pattern) Exp WS
+  | ETypeCase WS Pat (List TBranch) WS
+  | EFunction WS (List Pat) Exp WS
   | EFunctionApplication WS Exp (List Exp) WS
   -- type of let / recursive / pattern / value / inner
-  | ELet WS LetKind Bool Pattern Exp Exp WS
-  | ETypeDeclaration WS Pattern Type Exp WS
+  | ELet WS LetKind Bool Pat Exp Exp WS
+  | ETypeDeclaration WS Pat Type Exp WS
   | ETypeAnnotation WS Exp WS Type WS
   | EComment WS String Exp
   | EOption String String
@@ -641,7 +758,7 @@ type Exp
 
 identifierExpression : Parser Exp
 identifierExpression =
-  delayedCommitMap EIdentifier spaces identifierString
+  delayedCommitMap EIdentifier spaces (untrackInfo identifierString)
 
 --------------------------------------------------------------------------------
 -- Constant Expressions
@@ -649,7 +766,7 @@ identifierExpression =
 
 constantExpression : Parser Exp
 constantExpression =
-  delayedCommitMap EConstant spaces constant
+  delayedCommitMap EConstant spaces (untrackInfo constant)
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
@@ -1030,5 +1147,5 @@ exp =
 --= EXPORTS
 --==============================================================================
 
-parse : String -> Result Error Exp
-parse = run exp
+parse : String -> Result Error Pat
+parse = run pattern
