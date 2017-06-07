@@ -218,9 +218,6 @@ trackInfo p =
         |= getPos
     )
 
-untrackInfo : Parser (WithInfo a) -> Parser a
-untrackInfo = map (.val)
-
 -- TODO remove
 --delayedCommitMapWI
 --  : (a -> b -> value) -> Parser a -> Parser b -> Parser (WithInfo value)
@@ -270,84 +267,97 @@ numParser =
         |= sign
         |= float
 
+number_ : Parser Constant
+number_ =
+  let
+    frozenAnnotation =
+      inContext "frozen annotation" <|
+        oneOf
+          [ succeed Frozen
+              |. symbol "!"
+          , succeed Thawed
+              |. symbol "?"
+          , succeed Restricted
+              |. symbol "~"
+          , succeed Thawed -- default
+          ]
+    rangeAnnotation =
+      inContext "range annotation" <|
+        oneOf
+          [ map Just <|
+              succeed Range
+                |. symbol "{"
+                |= numParser
+                |. symbol "-"
+                |= numParser
+                |. symbol "}"
+          , succeed Nothing
+          ]
+  in
+    inContext "number" <|
+      succeed (\val frozen range -> CNumber frozen range val)
+        |= try numParser
+        |= frozenAnnotation
+        |= rangeAnnotation
+
 number : Parser (WithInfo Constant)
 number =
-  trackInfo <|
-    let
-      frozenAnnotation =
-        inContext "frozen annotation" <|
-          oneOf
-            [ succeed Frozen
-                |. symbol "!"
-            , succeed Thawed
-                |. symbol "?"
-            , succeed Restricted
-                |. symbol "~"
-            , succeed Thawed -- default
-            ]
-      rangeAnnotation =
-        inContext "range annotation" <|
-          oneOf
-            [ map Just <|
-                succeed Range
-                  |. symbol "{"
-                  |= numParser
-                  |. symbol "-"
-                  |= numParser
-                  |. symbol "}"
-            , succeed Nothing
-            ]
-    in
-      inContext "number" <|
-        succeed (\val frozen range -> CNumber frozen range val)
-          |= try numParser
-          |= frozenAnnotation
-          |= rangeAnnotation
+  trackInfo number_
 
 --------------------------------------------------------------------------------
 -- Strings
 --------------------------------------------------------------------------------
 
+string_ : Parser Constant
+string_ =
+  let
+    stringHelper quoteChar =
+      let
+        quoteString = fromChar quoteChar
+      in
+        succeed CString
+          |. symbol quoteString
+          |= keep zeroOrMore (\c -> c /= quoteChar)
+          |. symbol quoteString
+  in
+    inContext "string" <|
+      oneOf <| List.map stringHelper ['\'', '"'] -- " -- fix syntax highlighting
+
 string : Parser (WithInfo Constant)
 string =
-  trackInfo <|
-    let
-      stringHelper quoteChar =
-        let
-          quoteString = fromChar quoteChar
-        in
-          succeed CString
-            |. symbol quoteString
-            |= keep zeroOrMore (\c -> c /= quoteChar)
-            |. symbol quoteString
-    in
-      inContext "string" <|
-        oneOf <| List.map stringHelper ['\'', '"'] -- " -- fix syntax highlighting
+  trackInfo string_
 
 --------------------------------------------------------------------------------
 -- Bools
 --------------------------------------------------------------------------------
 
+bool_ : Parser Constant
+bool_ =
+  map CBool <|
+    oneOf <|
+      [ map (always True) <| keyword "true"
+      , map (always False) <| keyword "false"
+      ]
+
 bool : Parser (WithInfo Constant)
 bool =
-  trackInfo <|
-    map CBool <|
-      oneOf <|
-        [ map (always True) <| keyword "true"
-        , map (always False) <| keyword "false"
-        ]
+  trackInfo bool_
 
 --------------------------------------------------------------------------------
 -- General Constants
 --------------------------------------------------------------------------------
 
+constant_ : Parser Constant
+constant_ =
+  oneOf
+    [ number_
+    , string_
+    , bool_
+    ]
+
 constant : Parser (WithInfo Constant)
 constant =
-  oneOf
-    [ number
-    , string
-    , bool
-    ]
+  trackInfo constant_
 
 --==============================================================================
 --= IDENTIFIERS
@@ -390,10 +400,13 @@ keywords =
     , "typ"
     ]
 
+identifierString_ : Parser Identifier
+identifierString_ =
+  variable validIdentifierFirstChar validIdentifierRestChar keywords
+
 identifierString : Parser (WithInfo Identifier)
 identifierString =
-  trackInfo <|
-    variable validIdentifierFirstChar validIdentifierRestChar keywords
+  trackInfo identifierString_
 
 --==============================================================================
 --= PATTERNS
@@ -428,7 +441,7 @@ mapPat_ = map pat_
 identifierPattern : Parser Pat
 identifierPattern =
   trackInfo << mapPat_ <|
-    delayedCommitMap PIdentifier spaces (untrackInfo identifierString)
+    delayedCommitMap PIdentifier spaces identifierString_
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
@@ -437,7 +450,7 @@ identifierPattern =
 constantPattern : Parser Pat
 constantPattern =
   trackInfo << mapPat_ <|
-    delayedCommitMap PConstant spaces (untrackInfo constant)
+    delayedCommitMap PConstant spaces constant_
 
 --------------------------------------------------------------------------------
 -- Pattern Lists
@@ -481,7 +494,7 @@ asPattern =
         )
         ( succeed (,,)
             |= spaces
-            |= untrackInfo identifierString
+            |= identifierString_
             |= spaces
             |. symbol "@"
         )
@@ -560,7 +573,7 @@ stringType =
 aliasType : Parser Type
 aliasType =
   inContext "alias type" <|
-    delayedCommitMap TAlias spaces (untrackInfo identifierString)
+    delayedCommitMap TAlias spaces identifierString_
 
 --------------------------------------------------------------------------------
 -- Function Type
@@ -622,7 +635,7 @@ forallType : Parser Type
 forallType =
   let
     wsIdentifierPair =
-      delayedCommitMap (,) spaces (untrackInfo identifierString)
+      delayedCommitMap (,) spaces identifierString_
     quantifiers =
       oneOf
         [ inContext "forall type (one)" <|
@@ -758,7 +771,7 @@ type Exp
 
 identifierExpression : Parser Exp
 identifierExpression =
-  delayedCommitMap EIdentifier spaces (untrackInfo identifierString)
+  delayedCommitMap EIdentifier spaces identifierString_
 
 --------------------------------------------------------------------------------
 -- Constant Expressions
@@ -766,7 +779,7 @@ identifierExpression =
 
 constantExpression : Parser Exp
 constantExpression =
-  delayedCommitMap EConstant spaces (untrackInfo constant)
+  delayedCommitMap EConstant spaces constant_
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
