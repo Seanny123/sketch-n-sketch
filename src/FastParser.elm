@@ -218,23 +218,6 @@ trackInfo p =
         |= getPos
     )
 
--- TODO remove
---delayedCommitMapWI
---  : (a -> b -> value) -> Parser a -> Parser b -> Parser (WithInfo value)
---delayedCommitMapWI combiner pa pb =
---  delayedCommitMap
---    ( \(start, a) (b, end) ->
---        withInfo (combiner a b) start end
---    )
---    ( succeed (,)
---        |= getPos
---        |= pa
---    )
---    ( succeed (,)
---        |= pb
---        |= getPos
---    )
-
 --==============================================================================
 --= CONSTANTS
 --==============================================================================
@@ -242,6 +225,14 @@ trackInfo p =
 --------------------------------------------------------------------------------
 -- Data Types
 --------------------------------------------------------------------------------
+
+type FrozenState
+  = Frozen
+  | Thawed
+  | Restricted
+
+type Range
+  = Range Float Float
 
 type Constant
   = CNumber FrozenState (Maybe Range) Float
@@ -438,27 +429,35 @@ mapPat_ = map pat_
 -- Identifier Pattern
 --------------------------------------------------------------------------------
 
+identifierPattern_ : Parser Pat_
+identifierPattern_ =
+  mapPat_ <|
+    delayedCommitMap PIdentifier spaces identifierString_
+
 identifierPattern : Parser Pat
 identifierPattern =
-  trackInfo << mapPat_ <|
-    delayedCommitMap PIdentifier spaces identifierString_
+  trackInfo identifierPattern_
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
 --------------------------------------------------------------------------------
 
+constantPattern_ : Parser Pat_
+constantPattern_ =
+  mapPat_ <|
+    delayedCommitMap PConstant spaces constant_
+
 constantPattern : Parser Pat
 constantPattern =
-  trackInfo << mapPat_ <|
-    delayedCommitMap PConstant spaces constant_
+  trackInfo constantPattern_
 
 --------------------------------------------------------------------------------
 -- Pattern Lists
 --------------------------------------------------------------------------------
 
-patternList : Parser Pat
-patternList =
-  trackInfo << mapPat_ <|
+patternList_ : Parser Pat_
+patternList_ =
+  mapPat_ <|
     lazy <| \_ ->
       genericList
         { generalContext =
@@ -479,13 +478,17 @@ patternList =
             pattern
         }
 
+patternList : Parser Pat
+patternList =
+  trackInfo patternList_
+
 --------------------------------------------------------------------------------
 -- As-Patterns (@-Patterns)
 --------------------------------------------------------------------------------
 
-asPattern : Parser Pat
-asPattern =
-  trackInfo << mapPat_ <|
+asPattern_ : Parser Pat_
+asPattern_ =
+  mapPat_ <|
     inContext "as pattern" <|
       lazy <| \_ ->
         delayedCommitMap
@@ -500,19 +503,27 @@ asPattern =
         )
         pattern
 
+asPattern : Parser Pat
+asPattern =
+  trackInfo asPattern_
+
 --------------------------------------------------------------------------------
 -- General Patterns
 --------------------------------------------------------------------------------
 
-pattern : Parser Pat
-pattern =
+pattern_ : Parser Pat_
+pattern_ =
   inContext "pattern" <|
     oneOf
-      [ lazy <| \_ -> patternList
-      , lazy <| \_ -> asPattern
-      , constantPattern
-      , identifierPattern
+      [ lazy <| \_ -> patternList_
+      , lazy <| \_ -> asPattern_
+      , constantPattern_
+      , identifierPattern_
       ]
+
+pattern : Parser Pat
+pattern =
+  trackInfo pattern_
 
 --==============================================================================
 --= TYPES
@@ -762,14 +773,6 @@ typ =
 -- Data Types
 --------------------------------------------------------------------------------
 
-type FrozenState
-  = Frozen
-  | Thawed
-  | Restricted
-
-type Range
-  = Range Float Float
-
 type Op
   = Pi
   | Cos
@@ -801,7 +804,7 @@ type TBranch
 type LetKind
   = Let | Def
 
-type Exp
+type Exp__
   = EIdentifier WS Identifier
   | EConstant WS Constant
   | EOp WS Op (List Exp) WS
@@ -819,142 +822,177 @@ type Exp
   | EComment WS String Exp
   | EOption String String
 
+type alias EId  = Int
+type alias Exp_ = { e__ : Exp__, eid : EId  }
+type alias Exp = WithInfo Exp_
+
+exp_ : Exp__ -> Exp_
+exp_ e = { e__ = e, eid = -1 }
+
+mapExp_ : Parser Exp__ -> Parser Exp_
+mapExp_ = map exp_
+
 --------------------------------------------------------------------------------
 -- Identifier Expressions
 --------------------------------------------------------------------------------
 
+identifierExpression_ : Parser Exp_
+identifierExpression_ =
+  mapExp_ <|
+    delayedCommitMap EIdentifier spaces identifierString_
+
 identifierExpression : Parser Exp
 identifierExpression =
-  delayedCommitMap EIdentifier spaces identifierString_
+  trackInfo identifierExpression_
 
 --------------------------------------------------------------------------------
 -- Constant Expressions
 --------------------------------------------------------------------------------
 
+constantExpression_ : Parser Exp_
+constantExpression_ =
+  mapExp_ <|
+    delayedCommitMap EConstant spaces constant_
+
 constantExpression : Parser Exp
 constantExpression =
-  delayedCommitMap EConstant spaces constant_
+  trackInfo constantExpression_
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
 --------------------------------------------------------------------------------
 
+operator_ : Parser Exp_
+operator_ =
+  mapExp_ <|
+    let
+      op =
+        oneOf
+          [ succeed Pi
+            |. keyword "pi"
+          , succeed Cos
+            |. keyword "cos"
+          , succeed Sin
+            |. keyword "sin"
+          , succeed Arccos
+            |. keyword "arccos"
+          , succeed Arcsin
+            |. keyword "arcsin"
+          , succeed Floor
+            |. keyword "floor"
+          , succeed Ceiling
+            |. keyword "ceiling"
+          , succeed Round
+            |. keyword "round"
+          , succeed ToString
+            |. keyword "toString"
+          , succeed Sqrt
+            |. keyword "sqrt"
+          , succeed Explode
+            |. keyword "explode"
+          , succeed Plus
+            |. keyword "+"
+          , succeed Minus
+            |. keyword "-"
+          , succeed Multiply
+            |. keyword "*"
+          , succeed Divide
+            |. keyword "/"
+          , succeed LessThan
+            |. keyword "<"
+          , succeed Equal
+            |. keyword "="
+          , succeed Mod
+            |. keyword "mod"
+          , succeed Pow
+            |. keyword "pow"
+          , succeed Arctan2
+            |. keyword "arctan2"
+          ]
+    in
+      inContext "operator" <|
+        lazy <| \_ ->
+          parenBlock
+            ( \wsStart (op, args) wsEnd ->
+                EOp wsStart op args wsEnd
+            )
+            ( succeed (,)
+                |= op
+                |= repeat zeroOrMore expr
+            )
+
 operator : Parser Exp
 operator =
-  let
-    op =
-      oneOf
-        [ succeed Pi
-          |. keyword "pi"
-        , succeed Cos
-          |. keyword "cos"
-        , succeed Sin
-          |. keyword "sin"
-        , succeed Arccos
-          |. keyword "arccos"
-        , succeed Arcsin
-          |. keyword "arcsin"
-        , succeed Floor
-          |. keyword "floor"
-        , succeed Ceiling
-          |. keyword "ceiling"
-        , succeed Round
-          |. keyword "round"
-        , succeed ToString
-          |. keyword "toString"
-        , succeed Sqrt
-          |. keyword "sqrt"
-        , succeed Explode
-          |. keyword "explode"
-        , succeed Plus
-          |. keyword "+"
-        , succeed Minus
-          |. keyword "-"
-        , succeed Multiply
-          |. keyword "*"
-        , succeed Divide
-          |. keyword "/"
-        , succeed LessThan
-          |. keyword "<"
-        , succeed Equal
-          |. keyword "="
-        , succeed Mod
-          |. keyword "mod"
-        , succeed Pow
-          |. keyword "pow"
-        , succeed Arctan2
-          |. keyword "arctan2"
-        ]
-  in
-    inContext "operator" <|
-      lazy <| \_ ->
-        parenBlock
-          ( \wsStart (op, args) wsEnd ->
-              EOp wsStart op args wsEnd
-          )
-          ( succeed (,)
-              |= op
-              |= repeat zeroOrMore exp
-          )
+  trackInfo operator_
 
 --------------------------------------------------------------------------------
 -- Conditionals
 --------------------------------------------------------------------------------
 
+conditional_ : Parser Exp_
+conditional_ =
+  mapExp_ <|
+    inContext "conditional" <|
+      lazy <| \_ ->
+        parenBlock
+          ( \wsStart (c, a, b) wsEnd ->
+              EIf wsStart c a b wsEnd
+          )
+          ( succeed (,,)
+             |. keyword "if "
+             |= expr
+             |= expr
+             |= expr
+          )
+
 conditional : Parser Exp
 conditional =
-  inContext "conditional" <|
-    lazy <| \_ ->
-      parenBlock
-        ( \wsStart (c, a, b) wsEnd ->
-            EIf wsStart c a b wsEnd
-        )
-        ( succeed (,,)
-           |. keyword "if "
-           |= exp
-           |= exp
-           |= exp
-        )
+  trackInfo conditional_
 
 --------------------------------------------------------------------------------
 -- Lists
 --------------------------------------------------------------------------------
 
+list_ : Parser Exp_
+list_ =
+  mapExp_ <|
+    lazy <| \_ ->
+      genericList
+        { generalContext =
+            "list"
+        , listLiteralContext =
+            "list literal"
+        , multiConsContext =
+            "multi cons literal"
+        , listLiteralCombiner =
+            ( \wsStart heads wsEnd ->
+                EList wsStart heads "" Nothing wsEnd
+            )
+        , multiConsCombiner =
+            ( \wsStart heads wsBar tail wsEnd ->
+                EList wsStart heads wsBar (Just tail) wsEnd
+            )
+        , elem =
+            expr
+        }
+
 list : Parser Exp
 list =
-  lazy <| \_ ->
-    genericList
-      { generalContext =
-          "list"
-      , listLiteralContext =
-          "list literal"
-      , multiConsContext =
-          "multi cons literal"
-      , listLiteralCombiner =
-          ( \wsStart heads wsEnd ->
-              EList wsStart heads "" Nothing wsEnd
-          )
-      , multiConsCombiner =
-          ( \wsStart heads wsBar tail wsEnd ->
-              EList wsStart heads wsBar (Just tail) wsEnd
-          )
-      , elem =
-          exp
-      }
+  trackInfo list_
 
 --------------------------------------------------------------------------------
 -- Branch Helper
 --------------------------------------------------------------------------------
 
-genericCase
+genericCase_
   :  String
   -> String
-  -> (WS -> a -> (List c) -> WS -> Exp)
+  -> (WS -> a -> (List c) -> WS -> Exp__)
   -> (WS -> b -> Exp -> WS -> c)
   -> Parser a
   -> Parser b
-  -> Parser Exp
-genericCase context kword combiner branchCombiner parser branchParser =
+  -> Parser Exp_
+genericCase_ context kword combiner branchCombiner parser branchParser =
   let
     path =
       inContext (context ++ " path") <|
@@ -965,45 +1003,54 @@ genericCase context kword combiner branchCombiner parser branchParser =
             )
             ( succeed (,)
                 |= branchParser
-                |= exp
+                |= expr
             )
   in
-    inContext context <|
-      lazy <| \_ ->
-        parenBlock
-          ( \wsStart (c, branches) wsEnd ->
-              combiner wsStart c branches wsEnd
-          )
-          ( succeed (,)
-              |. keyword (kword ++ " ")
-              |= parser
-              |= repeat zeroOrMore path
-          )
+    mapExp_ <|
+      inContext context <|
+        lazy <| \_ ->
+          parenBlock
+            ( \wsStart (c, branches) wsEnd ->
+                combiner wsStart c branches wsEnd
+            )
+            ( succeed (,)
+                |. keyword (kword ++ " ")
+                |= parser
+                |= repeat zeroOrMore path
+            )
 
 --------------------------------------------------------------------------------
 -- Case Expressions
 --------------------------------------------------------------------------------
 
+caseExpression_ : Parser Exp_
+caseExpression_ =
+    lazy <| \_ ->
+      genericCase_ "case expression" "case" ECase Branch expr pattern
+
 caseExpression : Parser Exp
 caseExpression =
-  lazy <| \_ ->
-    genericCase "case expression" "case" ECase Branch exp pattern
+  trackInfo caseExpression_
 
 --------------------------------------------------------------------------------
 -- Type Case Expressions
 --------------------------------------------------------------------------------
 
+typeCaseExpression_ : Parser Exp_
+typeCaseExpression_ =
+    lazy <| \_ ->
+      genericCase_ "type case expression" "typecase" ETypeCase TBranch pattern typ
+
 typeCaseExpression : Parser Exp
 typeCaseExpression =
-  lazy <| \_ ->
-    genericCase "type case expression" "typecase" ETypeCase TBranch pattern typ
+  trackInfo typeCaseExpression_
 
 --------------------------------------------------------------------------------
 -- Functions
 --------------------------------------------------------------------------------
 
-function : Parser Exp
-function =
+function_ : Parser Exp_
+function_ =
   let
     parameters =
       oneOf
@@ -1011,99 +1058,115 @@ function =
         , parenBlockIgnoreWS <| repeat oneOrMore pattern
         ]
   in
-    inContext "function" <|
-      lazy <| \_ ->
-        parenBlock
-          ( \wsStart (params, body) wsEnd ->
-              EFunction wsStart params body wsEnd
-          )
-          ( succeed (,)
-              |. symbol "\\"
-              |= parameters
-              |= exp
-          )
+    mapExp_ <|
+      inContext "function" <|
+        lazy <| \_ ->
+          parenBlock
+            ( \wsStart (params, body) wsEnd ->
+                EFunction wsStart params body wsEnd
+            )
+            ( succeed (,)
+                |. symbol "\\"
+                |= parameters
+                |= expr
+            )
+
+function : Parser Exp
+function =
+  trackInfo function_
 
 --------------------------------------------------------------------------------
 -- Function Applications
 --------------------------------------------------------------------------------
 
+functionApplication_ : Parser Exp_
+functionApplication_ =
+  mapExp_ <|
+    inContext "function application" <|
+      lazy <| \_ ->
+        parenBlock
+          ( \wsStart (f, x) wsEnd ->
+              EFunctionApplication wsStart f x wsEnd
+          )
+          ( succeed (,)
+              |= expr
+              |= repeat oneOrMore expr
+          )
+
 functionApplication : Parser Exp
 functionApplication =
-  inContext "function application" <|
-    lazy <| \_ ->
-      parenBlock
-        ( \wsStart (f, x) wsEnd ->
-            EFunctionApplication wsStart f x wsEnd
-        )
-        ( succeed (,)
-            |= exp
-            |= repeat oneOrMore exp
-        )
+  trackInfo functionApplication_
 
 --------------------------------------------------------------------------------
 -- Let Bindings
 --------------------------------------------------------------------------------
 
-genericLetBinding : String -> String -> Bool -> Parser Exp
-genericLetBinding context kword isRec =
-  inContext context <|
-    parenBlock
-      ( \wsStart (pat, val, rest) wsEnd ->
-          ELet wsStart Let isRec pat val rest wsEnd
-      )
-      ( succeed (,,)
-          |. keyword (kword ++ " ")
-          |= pattern
-          |= exp
-          |= exp
-      )
+genericLetBinding_ : String -> String -> Bool -> Parser Exp_
+genericLetBinding_ context kword isRec =
+  mapExp_ <|
+    inContext context <|
+      parenBlock
+        ( \wsStart (pat, val, rest) wsEnd ->
+            ELet wsStart Let isRec pat val rest wsEnd
+        )
+        ( succeed (,,)
+            |. keyword (kword ++ " ")
+            |= pattern
+            |= expr
+            |= expr
+        )
 
-genericDefBinding : String -> String -> Bool -> Parser Exp
-genericDefBinding context kword isRec =
-  inContext context <|
-    delayedCommitMap
-      ( \wsStart (pat, val, wsEnd, rest) ->
-          ELet wsStart Def isRec pat val rest wsEnd
-      )
-      ( openBlock "(" )
-      ( succeed (,,,)
-          |. keyword (kword ++ " ")
-          |= pattern
-          |= exp
-          |= closeBlock ")"
-          |= exp
-      )
+genericDefBinding_ : String -> String -> Bool -> Parser Exp_
+genericDefBinding_ context kword isRec =
+  mapExp_ <|
+    inContext context <|
+      delayedCommitMap
+        ( \wsStart (pat, val, wsEnd, rest) ->
+            ELet wsStart Def isRec pat val rest wsEnd
+        )
+        ( openBlock "(" )
+        ( succeed (,,,)
+            |. keyword (kword ++ " ")
+            |= pattern
+            |= expr
+            |= closeBlock ")"
+            |= expr
+        )
 
-recursiveLetBinding : Parser Exp
-recursiveLetBinding =
+recursiveLetBinding_ : Parser Exp_
+recursiveLetBinding_ =
   lazy <| \_ ->
-    genericLetBinding "recursive let binding" "letrec" True
+    genericLetBinding_ "recursive let binding" "letrec" True
 
-simpleLetBinding : Parser Exp
-simpleLetBinding =
+simpleLetBinding_ : Parser Exp_
+simpleLetBinding_ =
   lazy <| \_ ->
-    genericLetBinding "non-recursive let binding" "let" False
+    genericLetBinding_ "non-recursive let binding" "let" False
 
-recursiveDefBinding : Parser Exp
-recursiveDefBinding =
+recursiveDefBinding_ : Parser Exp_
+recursiveDefBinding_ =
   lazy <| \_ ->
-    genericDefBinding "recursive def binding" "defrec" True
+    genericDefBinding_ "recursive def binding" "defrec" True
 
-simpleDefBinding : Parser Exp
-simpleDefBinding =
+simpleDefBinding_ : Parser Exp_
+simpleDefBinding_ =
   lazy <| \_ ->
-    genericDefBinding "non-recursive def binding" "def" False
+    genericDefBinding_ "non-recursive def binding" "def" False
 
-letBinding : Parser Exp
-letBinding =
+letBinding_ : Parser Exp_
+letBinding_ =
   inContext "let binding" <|
     lazy <| \_ ->
       oneOf
-        [ recursiveLetBinding
-        , simpleLetBinding
-        , recursiveDefBinding
-        , simpleDefBinding
+        [ recursiveLetBinding_
+        , simpleLetBinding_
+        , recursiveDefBinding_
+        , simpleDefBinding_
         ]
+
+letBinding : Parser Exp
+letBinding =
+  trackInfo letBinding_
 
 --------------------------------------------------------------------------------
 -- Options
@@ -1115,104 +1178,128 @@ validOptionChar : Char -> Bool
 validOptionChar c =
   Char.isLower c || Char.isUpper c || Char.isDigit c
 
+option_ : Parser Exp_
+option_ =
+  mapExp_ <|
+    succeed EOption
+      |. symbol "#"
+      |= keep oneOrMore validOptionChar
+      |= keep oneOrMore validOptionChar
+      |. ignoreUntil "\n"
+
 option : Parser Exp
 option =
-  succeed EOption
-    |. symbol "#"
-    |= keep oneOrMore validOptionChar
-    |= keep oneOrMore validOptionChar
-    |. ignoreUntil "\n"
+  trackInfo option_
 
 --------------------------------------------------------------------------------
 -- Type Declarations
 --------------------------------------------------------------------------------
 
+typeDeclaration_ : Parser Exp_
+typeDeclaration_ =
+  mapExp_ <|
+    inContext "type declaration" <|
+      delayedCommitMap
+        ( \wsStart (pat, t, wsEnd, rest) ->
+            ETypeDeclaration wsStart pat t rest wsEnd
+        )
+        ( openBlock "(" )
+        ( succeed (,,,)
+            |. keyword "typ "
+            |= identifierPattern
+            |= typ
+            |= closeBlock ")"
+            |= expr
+        )
+
 typeDeclaration : Parser Exp
 typeDeclaration =
-  inContext "type declaration" <|
-    delayedCommitMap
-      ( \wsStart (pat, t, wsEnd, rest) ->
-          ETypeDeclaration wsStart pat t rest wsEnd
-      )
-      ( openBlock "(" )
-      ( succeed (,,,)
-          |. keyword "typ "
-          |= identifierPattern
-          |= typ
-          |= closeBlock ")"
-          |= exp
-      )
+  trackInfo typeDeclaration_
 
 --------------------------------------------------------------------------------
 -- Type Annotations
 --------------------------------------------------------------------------------
 
-typeAnnotation : Parser Exp
-typeAnnotation =
-  inContext "type annotation" <|
-    lazy <| \_ ->
-      parenBlock
-        ( \wsStart (e, wsColon, t) wsEnd ->
-            ETypeAnnotation wsStart e wsColon t wsEnd
-        )
-        ( delayedCommitMap
-            ( \(e, wsColon) t ->
-                (e, wsColon, t)
-            )
-            ( succeed (,)
-                |= exp
-                |= spaces
-                |. symbol ":"
-            )
-            typ
-        )
+typeAnnotation_ : Parser Exp_
+typeAnnotation_ =
+  mapExp_ <|
+    inContext "type annotation" <|
+      lazy <| \_ ->
+        parenBlock
+          ( \wsStart (e, wsColon, t) wsEnd ->
+              ETypeAnnotation wsStart e wsColon t wsEnd
+          )
+          ( delayedCommitMap
+              ( \(e, wsColon) t ->
+                  (e, wsColon, t)
+              )
+              ( succeed (,)
+                  |= expr
+                  |= spaces
+                  |. symbol ":"
+              )
+              typ
+          )
+
+typeAnnoation : Parser Exp
+typeAnnoation =
+  trackInfo typeAnnotation_
 
 --------------------------------------------------------------------------------
 -- Comments
 --------------------------------------------------------------------------------
 
+comment_ : Parser Exp_
+comment_ =
+  mapExp_ <|
+    inContext "comment" <|
+      lazy <| \_ ->
+        delayedCommitMap
+          ( \wsStart (text, rest) ->
+              EComment wsStart text rest
+          )
+          spaces
+          ( succeed (,)
+              |. symbol ";"
+              |= keep zeroOrMore (\c -> c /= '\n')
+              |. symbol "\n"
+              |= expr
+          )
+
 comment : Parser Exp
 comment =
-  inContext "comment" <|
-    lazy <| \_ ->
-      delayedCommitMap
-        ( \wsStart (text, rest) ->
-            EComment wsStart text rest
-        )
-        spaces
-        ( succeed (,)
-            |. symbol ";"
-            |= keep zeroOrMore (\c -> c /= '\n')
-            |. symbol "\n"
-            |= exp
-        )
+  trackInfo comment_
 
 --------------------------------------------------------------------------------
 -- General Expressions
 --------------------------------------------------------------------------------
 
-exp : Parser Exp
-exp =
+expr_ : Parser Exp_
+expr_ =
   inContext "expression" <|
     oneOf
-      [ constantExpression
-      , lazy <| \_ -> operator
-      , lazy <| \_ -> conditional
-      , lazy <| \_ -> letBinding
-      , lazy <| \_ -> caseExpression
-      , lazy <| \_ -> typeCaseExpression
-      , lazy <| \_ -> typeDeclaration
-      , lazy <| \_ -> typeAnnotation
-      , lazy <| \_ -> list
-      , lazy <| \_ -> function
-      , lazy <| \_ -> functionApplication
-      , lazy <| \_ -> comment
-      , identifierExpression
+      [ constantExpression_
+      , lazy <| \_ -> operator_
+      , lazy <| \_ -> conditional_
+      , lazy <| \_ -> letBinding_
+      , lazy <| \_ -> caseExpression_
+      , lazy <| \_ -> typeCaseExpression_
+      , lazy <| \_ -> typeDeclaration_
+      , lazy <| \_ -> typeAnnotation_
+      , lazy <| \_ -> list_
+      , lazy <| \_ -> function_
+      , lazy <| \_ -> functionApplication_
+      , lazy <| \_ -> comment_
+      , identifierExpression_
       ]
+
+expr : Parser Exp
+expr =
+  trackInfo expr_
 
 --==============================================================================
 --= EXPORTS
 --==============================================================================
 
-parse : String -> Result Error Type
-parse = run typ
+parse : String -> Result Error Exp
+parse = run expr
