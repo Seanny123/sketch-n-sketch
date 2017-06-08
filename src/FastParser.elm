@@ -526,7 +526,7 @@ type OneOrMany a
   = One a
   | Many WS (List a) WS
 
-type Type
+type Type_
   = TNull WS
   | TNum WS
   | TBool WS
@@ -539,48 +539,74 @@ type Type
   | TUnion WS (List Type) WS
   | TWildcard WS
 
+type alias Type = WithInfo Type_
+
 --------------------------------------------------------------------------------
 -- Base Types
 --------------------------------------------------------------------------------
 
-baseType : String -> (WS -> Type) -> String -> Parser Type
-baseType context combiner token =
+baseType_ : String -> (WS -> Type_) -> String -> Parser Type_
+baseType_ context combiner token =
   inContext context <|
     delayedCommitMap always
       (map combiner spaces)
       (keyword token)
 
+baseType : String -> (WS -> Type_) -> String -> Parser Type
+baseType context combiner token =
+  trackInfo (baseType_ context combiner token)
+
+nullType_ : Parser Type_
+nullType_ =
+  baseType_ "null type" TNull "Null"
+
 nullType : Parser Type
 nullType =
-  baseType "null type" TNull "Null"
+  trackInfo nullType_
+
+numType_ : Parser Type_
+numType_ =
+  baseType_ "num type" TNum "Num"
 
 numType : Parser Type
 numType =
-  baseType "num type" TNum "Num"
+  trackInfo numType_
+
+boolType_ : Parser Type_
+boolType_ =
+  baseType_ "boool type" TBool "Bool"
 
 boolType : Parser Type
 boolType =
-  baseType "boool type" TBool "Bool"
+  trackInfo boolType_
+
+stringType_ : Parser Type_
+stringType_ =
+  baseType_ "string type" TString "String"
 
 stringType : Parser Type
 stringType =
-  baseType "string type" TString "String"
+  trackInfo stringType_
 
 --------------------------------------------------------------------------------
 -- Aliased Types
 --------------------------------------------------------------------------------
 
-aliasType : Parser Type
-aliasType =
+aliasType_ : Parser Type_
+aliasType_ =
   inContext "alias type" <|
     delayedCommitMap TAlias spaces identifierString_
+
+aliasType : Parser Type
+aliasType =
+  trackInfo aliasType_
 
 --------------------------------------------------------------------------------
 -- Function Type
 --------------------------------------------------------------------------------
 
-functionType : Parser Type
-functionType =
+functionType_ : Parser Type_
+functionType_ =
   inContext "function type" <|
     lazy <| \_ ->
       parenBlock TFunction <|
@@ -588,12 +614,16 @@ functionType =
           |. keyword "->"
           |= repeat oneOrMore typ
 
+functionType : Parser Type
+functionType =
+  trackInfo functionType_
+
 --------------------------------------------------------------------------------
 -- List Type
 --------------------------------------------------------------------------------
 
-listType : Parser Type
-listType =
+listType_ : Parser Type_
+listType_ =
   inContext "list type" <|
     lazy <| \_ ->
       parenBlock TList <|
@@ -601,12 +631,16 @@ listType =
           |. keyword "List"
           |= typ
 
+listType : Parser Type
+listType =
+  trackInfo listType_
+
 --------------------------------------------------------------------------------
 -- Tuple Type
 --------------------------------------------------------------------------------
 
-tupleType : Parser Type
-tupleType =
+tupleType_ : Parser Type_
+tupleType_ =
   lazy <| \_ ->
     genericList
       { generalContext =
@@ -627,12 +661,16 @@ tupleType =
           typ
       }
 
+tupleType : Parser Type
+tupleType =
+  trackInfo tupleType_
+
 --------------------------------------------------------------------------------
 -- Forall Type
 --------------------------------------------------------------------------------
 
-forallType : Parser Type
-forallType =
+forallType_ : Parser Type_
+forallType_ =
   let
     wsIdentifierPair =
       delayedCommitMap (,) spaces identifierString_
@@ -657,12 +695,16 @@ forallType =
               |= typ
           )
 
+forallType : Parser Type
+forallType =
+  trackInfo forallType_
+
 --------------------------------------------------------------------------------
 -- Union Type
 --------------------------------------------------------------------------------
 
-unionType : Parser Type
-unionType =
+unionType_ : Parser Type_
+unionType_ =
   inContext "union type" <|
     lazy <| \_ ->
       parenBlock TUnion <|
@@ -670,35 +712,47 @@ unionType =
           |. keyword "union"
           |= repeat oneOrMore typ
 
+unionType : Parser Type
+unionType =
+  trackInfo unionType_
+
 --------------------------------------------------------------------------------
 -- Wildcard Type
 --------------------------------------------------------------------------------
 
-wildcardType : Parser Type
-wildcardType =
+wildcardType_ : Parser Type_
+wildcardType_ =
   inContext "wildcard type" <|
     delayedCommitMap (always << TWildcard) spaces (symbol "_")
+
+wildcardType : Parser Type
+wildcardType =
+  trackInfo wildcardType_
 
 --------------------------------------------------------------------------------
 -- General Types
 --------------------------------------------------------------------------------
 
-typ : Parser Type
-typ =
+typ_ : Parser Type_
+typ_ =
   inContext "type" <|
     oneOf
-      [ nullType
-      , numType
-      , boolType
-      , stringType
-      , wildcardType
-      , lazy <| \_ -> functionType
-      , lazy <| \_ -> listType
-      , lazy <| \_ -> tupleType
-      , lazy <| \_ -> forallType
-      , lazy <| \_ -> unionType
-      , aliasType
+      [ nullType_
+      , numType_
+      , boolType_
+      , stringType_
+      , wildcardType_
+      , lazy <| \_ -> functionType_
+      , lazy <| \_ -> listType_
+      , lazy <| \_ -> tupleType_
+      , lazy <| \_ -> forallType_
+      , lazy <| \_ -> unionType_
+      , aliasType_
       ]
+
+typ : Parser Type
+typ =
+  trackInfo typ_
 
 --==============================================================================
 --= EXPRESSIONS
@@ -1160,5 +1214,5 @@ exp =
 --= EXPORTS
 --==============================================================================
 
-parse : String -> Result Error Pat
-parse = run pattern
+parse : String -> Result Error Type
+parse = run typ
