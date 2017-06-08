@@ -202,10 +202,6 @@ withInfo x start end =
   , end = end
   }
 
-mapInfo : (a -> b) -> WithInfo a -> WithInfo b
-mapInfo f w =
-  { w | val = f w.val }
-
 trackInfo : Parser a -> Parser (WithInfo a)
 trackInfo p =
   delayedCommitMap
