@@ -1022,7 +1022,8 @@ genericCase_ context kword combiner branchCombiner parser branchParser =
 caseExpression_ : Parser Exp_
 caseExpression_ =
     lazy <| \_ ->
-      genericCase_ "case expression" "case" ECase Branch expr pattern
+      genericCase_ "case expression" "case"
+                   ECase Branch expr pattern
 
 caseExpression : Parser Exp
 caseExpression =
@@ -1035,7 +1036,8 @@ caseExpression =
 typeCaseExpression_ : Parser Exp_
 typeCaseExpression_ =
     lazy <| \_ ->
-      genericCase_ "type case expression" "typecase" ETypeCase TBranch pattern typ
+      genericCase_ "type case expression" "typecase"
+                   ETypeCase TBranch pattern typ
 
 typeCaseExpression : Parser Exp
 typeCaseExpression =
@@ -1102,8 +1104,8 @@ genericLetBinding_ context kword isRec =
   mapExp_ <|
     inContext context <|
       parenBlock
-        ( \wsStart (pat, val, rest) wsEnd ->
-            ELet wsStart Let isRec pat val rest wsEnd
+        ( \wsStart (name, binding, rest) wsEnd ->
+            ELet wsStart Let isRec name binding rest wsEnd
         )
         ( succeed (,,)
             |. keyword (kword ++ " ")
@@ -1117,8 +1119,8 @@ genericDefBinding_ context kword isRec =
   mapExp_ <|
     inContext context <|
       delayedCommitMap
-        ( \wsStart (pat, val, wsEnd, rest) ->
-            ELet wsStart Def isRec pat val rest wsEnd
+        ( \wsStart (name, binding, wsEnd, rest) ->
+            ELet wsStart Def isRec name binding rest wsEnd
         )
         ( openBlock "(" )
         ( succeed (,,,)
@@ -1294,8 +1296,148 @@ expr =
   trackInfo expr_
 
 --==============================================================================
+--= TOP-LEVEL EXPRESSIONS
+--==============================================================================
+
+--------------------------------------------------------------------------------
+-- Data Types
+--------------------------------------------------------------------------------
+
+type alias TopLevelExp_ = Exp -> Exp_
+type alias TopLevelExp = WithInfo TopLevelExp_
+
+--------------------------------------------------------------------------------
+-- Top-Level Expression Fusing
+--------------------------------------------------------------------------------
+
+fuseTopLevelExp : TopLevelExp -> Exp -> Exp
+fuseTopLevelExp tld rest =
+  withInfo (tld.val rest) tld.start tld.end
+
+fuseTopLevelExps : (List TopLevelExp) -> Exp -> Exp
+fuseTopLevelExps tlds rest =
+  List.foldr fuseTopLevelExp rest tlds
+
+--------------------------------------------------------------------------------
+-- Top-Level Defs
+--------------------------------------------------------------------------------
+
+genericTopLevelDef_ : String -> String -> Bool -> Parser TopLevelExp_
+genericTopLevelDef_ context kword isRec =
+  inContext context <|
+    parenBlock
+      ( \wsStart (name, binding) wsEnd ->
+          ( \rest ->
+              exp_ <| ELet wsStart Def isRec name binding rest wsEnd
+          )
+      )
+      ( succeed (,)
+          |. keyword (kword ++ " ")
+          |= pattern
+          |= expr
+      )
+
+recursiveTopLevelDef_ : Parser TopLevelExp_
+recursiveTopLevelDef_ =
+  genericTopLevelDef_ "top-level recursive def binding" "defrec" True
+
+simpleTopLevelDef_ : Parser TopLevelExp_
+simpleTopLevelDef_ =
+  genericTopLevelDef_ "top-level non-recursive def binding" "def" False
+
+topLevelDef_ : Parser TopLevelExp_
+topLevelDef_ =
+  inContext "top-level def binding" <|
+    oneOf
+      [ recursiveTopLevelDef_
+      , simpleTopLevelDef_
+      ]
+
+topLevelDef : Parser TopLevelExp
+topLevelDef =
+  trackInfo topLevelDef_
+
+--------------------------------------------------------------------------------
+-- Top-Level Type Declarations
+--------------------------------------------------------------------------------
+
+topLevelTypeDeclaration_ : Parser TopLevelExp_
+topLevelTypeDeclaration_ =
+  inContext "top-level type declaration" <|
+    parenBlock
+      ( \wsStart (pat, t) wsEnd ->
+          ( \rest ->
+              exp_ <| ETypeDeclaration wsStart pat t rest wsEnd
+          )
+      )
+      ( succeed (,)
+          |. keyword "typ "
+          |= identifierPattern
+          |= typ
+      )
+
+topLevelTypeDeclaration : Parser TopLevelExp
+topLevelTypeDeclaration =
+  trackInfo topLevelTypeDeclaration_
+
+--------------------------------------------------------------------------------
+-- Top-Level Comments
+--------------------------------------------------------------------------------
+
+topLevelComment_ : Parser TopLevelExp_
+topLevelComment_ =
+  inContext "top-level comment" <|
+    delayedCommitMap
+      ( \wsStart text ->
+          ( \rest ->
+              exp_ <| EComment wsStart text rest
+          )
+      )
+      spaces
+      ( succeed identity
+          |. symbol ";"
+          |= keep zeroOrMore (\c -> c /= '\n')
+          |. symbol "\n"
+      )
+
+topLevelComment : Parser TopLevelExp
+topLevelComment =
+  trackInfo topLevelComment_
+
+--------------------------------------------------------------------------------
+-- General Top-Level Expressions
+--------------------------------------------------------------------------------
+
+topLevelExp_ : Parser TopLevelExp_
+topLevelExp_ =
+  inContext "top-level expression" <|
+    oneOf
+      [ topLevelDef_
+      , topLevelTypeDeclaration_
+      , topLevelComment_
+      ]
+
+topLevelExp : Parser TopLevelExp
+topLevelExp =
+  trackInfo topLevelExp_
+
+allTopLevelExps : Parser (List TopLevelExp)
+allTopLevelExps =
+  repeat zeroOrMore topLevelExp
+
+--==============================================================================
+--= PROGRAMS
+--==============================================================================
+
+program : Parser Exp
+program =
+  succeed fuseTopLevelExps
+    |= allTopLevelExps
+    |= expr
+
+--==============================================================================
 --= EXPORTS
 --==============================================================================
 
 parse : String -> Result Error Exp
-parse = run expr
+parse = run program
