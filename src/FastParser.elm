@@ -31,6 +31,10 @@ try : Parser a -> Parser a
 try parser =
   delayedCommitMap always parser (succeed ())
 
+token : String -> Parser String
+token s =
+  map (always s) (keyword s)
+
 --------------------------------------------------------------------------------
 -- Info Helpers
 --------------------------------------------------------------------------------
@@ -165,10 +169,12 @@ genericList args =
 --= NUMBERS
 --==============================================================================
 
--- TODO fix widgets
+--------------------------------------------------------------------------------
+-- Raw Numbers
+--------------------------------------------------------------------------------
 
-numParser : Parser Float
-numParser =
+num_ : Parser Num
+num_ =
   let
     sign =
       oneOf
@@ -182,35 +188,50 @@ numParser =
         |= sign
         |= float
 
-number_ : Parser Num
-number_ =
-  let
-    frozenAnnotation =
-      inContext "frozen annotation" <|
-        oneOf <|
-          List.map symbol [frozen, unann, thawed, assignOnlyOnce]
-    rangeAnnotation =
-      inContext "range annotation" <|
-        oneOf
-          [ map Just <|
-              succeed (,)
-                |. symbol "{"
-                |= numParser
-                |. symbol "-"
-                |= numParser
-                |. symbol "}"
-          , succeed Nothing
-          ]
-  in
-    inContext "number" <|
-      succeed (\val frozen range -> val) --CNumber frozen range val)
-        |= try numParser
-        |= frozenAnnotation
-        |= rangeAnnotation
+num : Parser (WithInfo Num)
+num =
+  trackInfo num_
 
-number : Parser (WithInfo Num)
-number =
-  trackInfo number_
+--------------------------------------------------------------------------------
+-- Widget Declarations
+--------------------------------------------------------------------------------
+
+isInt : Num -> Bool
+isInt n = n == toFloat (floor n)
+
+widgetDecl_ : Caption -> Parser WidgetDecl_
+widgetDecl_ cap =
+  let
+    combiner a tok b =
+      if List.all isInt [a.val, b.val] then
+        IntSlider (mapInfo floor a) tok (mapInfo floor b) cap
+      else
+        NumSlider a tok b cap
+  in
+    inContext "widget declaration" <|
+      oneOf
+        [ succeed combiner
+            |. symbol "{"
+            |= num
+            |= trackInfo (token "-")
+            |= num
+            |. symbol "}"
+        , succeed NoWidgetDecl
+        ]
+
+widgetDecl : Caption -> Parser WidgetDecl
+widgetDecl cap =
+  trackInfo <| widgetDecl_ cap
+
+--------------------------------------------------------------------------------
+-- Frozen Annotations
+--------------------------------------------------------------------------------
+
+frozenAnnotation : Parser Frozen
+frozenAnnotation =
+  inContext "frozen annotation" <|
+    oneOf <|
+      List.map token [frozen, unann, thawed, assignOnlyOnce]
 
 --==============================================================================
 --= BASE VALUES
@@ -385,7 +406,7 @@ variablePattern =
 
 constantPattern_ : Parser Pat_
 constantPattern_ =
-  delayedCommitMap PConst spaces number_
+  delayedCommitMap PConst spaces num_
 
 constantPattern : Parser Pat
 constantPattern =
@@ -736,15 +757,23 @@ variableExpression =
 -- Constant Expressions
 --------------------------------------------------------------------------------
 
--- TODO fix widgets
+-- TODO interacts badly with auto-abstracted variable names...
+dummyLocWithDebugInfo : Frozen -> Num -> Loc
+dummyLocWithDebugInfo b n = (0, b, "")
 
 constantExpression_ : Parser Exp_
 constantExpression_ =
   mapExp_ <|
     delayedCommitMap
-      (\ws num -> EConst ws num dummyLoc noWidgetDecl)
-      spaces
-      number_
+      ( \ws (n, fa, w) ->
+          EConst ws n (dummyLocWithDebugInfo fa n) w
+      )
+      ( spaces )
+      ( succeed (,,)
+          |= num_
+          |= frozenAnnotation
+          |= widgetDecl Nothing
+      )
 
 constantExpression : Parser Exp
 constantExpression =
@@ -762,7 +791,6 @@ baseValueExpression_ =
 baseValueExpression : Parser Exp
 baseValueExpression =
   trackInfo baseValueExpression_
-
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
@@ -1095,9 +1123,9 @@ option_ =
     succeed EOption
       |. symbol "#"
       |= spaces
-      |= (trackInfo <| keep oneOrMore validOptionChar)
+      |= trackInfo (keep oneOrMore validOptionChar)
       |= spaces
-      |= (trackInfo <| keep oneOrMore validOptionChar)
+      |= trackInfo (keep oneOrMore validOptionChar)
       |= expr
 
 option : Parser Exp
