@@ -1,15 +1,23 @@
-module FastParser exposing (parse)
+module FastParser exposing
+  ( prelude, isPreludeLoc, isPreludeLocId, isPreludeEId
+  , substOf, substStrOf, substPlusOf
+  , parseE, parseT
+  , freshen
+  )
 
 import List
 import Char
 
 import String exposing (fromChar)
 import Set exposing (Set)
+import Dict exposing (Dict)
 
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
 import Parser.LowLevel exposing (getPosition)
 
+import Utils as U
+import PreludeGenerated as Prelude
 import Lang exposing (..)
 
 --==============================================================================
@@ -1384,5 +1392,177 @@ program =
 --= EXPORTS
 --==============================================================================
 
-parse : String -> Result Error Exp
-parse = run program
+parseE_ : (Exp -> Exp) -> String -> Result Error Exp
+parseE_ f = run (map f program)
+
+parseE : String -> Result Error Exp
+parseE = parseE_ freshen
+
+parseT : String -> Result Error Type
+parseT = run typ
+
+--------------------------------------------------------------------------------
+-- Code from old parser
+--------------------------------------------------------------------------------
+
+(prelude, initK) =
+  freshenClean 1 <| U.fromOkay "parse prelude" <| parseE_ identity Prelude.src
+
+preludeIds = allIds prelude
+
+isPreludeLoc : Loc -> Bool
+isPreludeLoc (k,_,_) = isPreludeLocId k
+
+isPreludeLocId : LocId -> Bool
+isPreludeLocId k = k < initK
+
+isPreludeEId : EId -> Bool
+isPreludeEId k = k < initK
+
+------------------------------------------------------------------------------
+
+-- assign EId's and locId's
+-- existing unique EId's/locId's are preserved
+-- duplicated and dummy EId's/locId's are reassigned
+
+freshen : Exp -> Exp
+freshen e =
+  -- let _ = Debug.log ("To Freshen:\n" ++ LangUnparser.unparseWithIds e) () in
+  let (duplicateIds, allIds) = duplicateAndAllIds e in
+  -- let _ = Debug.log "Duplicate Ids" duplicateIds in
+  -- let _ = Debug.log "All Ids" allIds in
+  let idsToPreserve = Set.diff allIds duplicateIds in
+  -- let _ = Debug.log "Ids to preserve" idsToPreserve in
+  let result = Tuple.first (freshenPreserving idsToPreserve initK e) in
+  -- let _ = Debug.log ("Freshened result:\n" ++ LangUnparser.unparseWithIds result) () in
+  result
+
+-- Overwrite any existing EId's/locId's
+freshenClean : Int -> Exp -> (Exp, Int)
+freshenClean initK e = freshenPreserving Set.empty initK e
+
+-- Reassign any id not in idsToPreserve
+freshenPreserving : Set.Set Int -> Int -> Exp -> (Exp, Int)
+freshenPreserving idsToPreserve initK e =
+  let getId k =
+    if Set.member k idsToPreserve
+    then getId (k+1)
+    else k
+  in
+  let assignIds exp k =
+    let e__ = exp.val.e__ in
+    let (newE__, newK) =
+      case e__ of
+        EConst ws n (locId, frozen, ident) wd ->
+          if Set.member locId idsToPreserve then
+            (e__, k)
+          else
+            let locId = getId k in
+            (EConst ws n (locId, frozen, ident) wd, locId + 1)
+
+        ELet ws1 kind b p e1 e2 ws2 ->
+          let newE1 = recordIdentifiers (p, e1) in
+          (ELet ws1 kind b p newE1 e2 ws2, k)
+
+        _ ->
+          (e__, k)
+    in
+    if Set.member exp.val.eid idsToPreserve then
+      (replaceE__ exp newE__, newK)
+    else
+      let eid = getId newK in
+      (WithInfo (Exp_ newE__ eid) exp.start exp.end, eid + 1)
+  in
+  mapFoldExp assignIds initK e
+
+allIds : Exp -> Set.Set Int
+allIds exp = duplicateAndAllIds exp |> Tuple.first
+
+-- Excludes EIds and locIds less than initK (i.e. no prelude locs or dummy EIds)
+duplicateAndAllIds : Exp -> (Set.Set Int, Set.Set Int)
+duplicateAndAllIds exp =
+  let gather exp (duplicateIds, seenIds) =
+    let eid = exp.val.eid in
+    let (duplicateIds_, seenIds_) =
+      if eid >= initK then
+        if Set.member eid seenIds
+        then (Set.insert eid duplicateIds, seenIds)
+        else (duplicateIds, Set.insert eid seenIds)
+      else
+        (duplicateIds, seenIds)
+    in
+    case exp.val.e__ of
+      EConst ws n (locId, frozen, ident) wd ->
+        if locId >= initK then
+          if Set.member locId seenIds
+          then (Set.insert locId duplicateIds_, seenIds_)
+          else (duplicateIds_, Set.insert locId seenIds_)
+        else
+          (duplicateIds_, seenIds_)
+
+      _ ->
+        (duplicateIds_, seenIds_)
+  in
+  let (duplicateIds, seenIds) =
+    foldExp
+        gather
+        (Set.empty, Set.empty)
+        exp
+  in
+  (duplicateIds, seenIds)
+
+
+preludeSubst = substPlusOf_ Dict.empty prelude
+
+substPlusOf : Exp -> SubstPlus
+substPlusOf e =
+  substPlusOf_ preludeSubst e
+
+substOf : Exp -> Subst
+substOf = Dict.map (always .val) << substPlusOf
+
+substStrOf : Exp -> SubstStr
+substStrOf = Dict.map (always toString) << substOf
+
+
+-- Record the primary identifier in the EConsts_ Locs, where appropriate.
+recordIdentifiers : (Pat, Exp) -> Exp
+recordIdentifiers (p,e) =
+ let ret e__ = WithInfo (Exp_ e__ e.val.eid) e.start e.end in
+ case (p.val, e.val.e__) of
+
+  -- (PVar _ x _, EConst ws n (k, b, "") wd) -> ret <| EConst ws n (k, b, x) wd
+  (PVar _ x _, EConst ws n (k, b, _) wd) -> ret <| EConst ws n (k, b, x) wd
+
+  (PList _ ps _ mp _, EList ws1 es ws2 me ws3) ->
+    case U.maybeZip ps es of
+      Nothing  -> ret <| EList ws1 es ws2 me ws3
+      Just pes -> let es_ = List.map recordIdentifiers pes in
+                  let me_ =
+                    case (mp, me) of
+                      (Just p1, Just e1) -> Just (recordIdentifiers (p1,e1))
+                      _                  -> me in
+                  ret <| EList ws1 es_ ws2 me_ ws3
+
+  (PAs _ _ _ p_, _) -> recordIdentifiers (p_,e)
+
+  (_, EColonType ws1 e1 ws2 t ws3) ->
+    ret <| EColonType ws1 (recordIdentifiers (p,e1)) ws2 t ws3
+
+  (_, e__) -> ret e__
+
+-- this will be done while parsing eventually...
+
+substPlusOf_ : SubstPlus -> Exp -> SubstPlus
+substPlusOf_ substPlus exp =
+  let accumulator e s =
+    case e.val.e__ of
+      EConst _ n (locId,_,_) _ ->
+        case Dict.get locId s of
+          Nothing ->
+            Dict.insert locId { e | val = n } s
+          Just existing ->
+            if n == existing.val then s else Debug.crash <| "substPlusOf_ Constant: " ++ (toString n)
+      _ -> s
+  in
+  foldExp accumulator substPlus exp

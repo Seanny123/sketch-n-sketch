@@ -114,7 +114,7 @@ displayModel model =
               ++ ") Error trying to parse '" ++ c.description ++ "'."
         ]
     (color, status, body) =
-      case (FastParser.parse model) of
+      case (FastParser.parseE model) of
         (Ok exp) ->
           ("#008800"
           , "Success"
