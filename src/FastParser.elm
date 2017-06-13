@@ -10,6 +10,8 @@ import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
 import Parser.LowLevel exposing (getPosition)
 
+import Lang exposing (..)
+
 --==============================================================================
 --= HELPERS
 --==============================================================================
@@ -30,10 +32,28 @@ try parser =
   delayedCommitMap always parser (succeed ())
 
 --------------------------------------------------------------------------------
--- Whitespace
+-- Info Helpers
 --------------------------------------------------------------------------------
 
-type alias WS = String
+getPos : Parser Pos
+getPos =
+  map posFromRowCol getPosition
+
+trackInfo : Parser a -> Parser (WithInfo a)
+trackInfo p =
+  delayedCommitMap
+    ( \start (a, end) ->
+        withInfo a start end
+    )
+    getPos
+    ( succeed (,)
+        |= p
+        |= getPos
+    )
+
+--------------------------------------------------------------------------------
+-- Whitespace
+--------------------------------------------------------------------------------
 
 isSpace : Char -> Bool
 isSpace c =
@@ -142,102 +162,10 @@ genericList args =
       ]
 
 --==============================================================================
---= POSITION INFO
+--= NUMBERS
 --==============================================================================
 
---------------------------------------------------------------------------------
--- Pos
---------------------------------------------------------------------------------
-
-type alias Pos =
-  { line : Int
-  , col : Int
-  }
-
-startPos : Pos
-startPos =
-  { line = 1
-  , col = 1
-  }
-
-dummyPos : Pos
-dummyPos =
-  { line = -1
-  , col = -1
-  }
-
-posFromRowCol : (Int, Int) -> Pos
-posFromRowCol (row, col) =
-  { line = row
-  , col = col
-  }
-
---------------------------------------------------------------------------------
--- WithPos
---------------------------------------------------------------------------------
-
-type alias WithPos a =
-  { val : a
-  , pos : Pos
-  }
-
-getPos : Parser Pos
-getPos =
-  map posFromRowCol getPosition
-
---------------------------------------------------------------------------------
--- WithInfo
---------------------------------------------------------------------------------
-
-type alias WithInfo a =
-  { val : a
-  , start : Pos
-  , end : Pos
-  }
-
-withInfo : a -> Pos -> Pos -> WithInfo a
-withInfo x start end =
-  { val = x
-  , start = start
-  , end = end
-  }
-
-trackInfo : Parser a -> Parser (WithInfo a)
-trackInfo p =
-  delayedCommitMap
-    ( \start (a, end) ->
-        withInfo a start end
-    )
-    getPos
-    ( succeed (,)
-        |= p
-        |= getPos
-    )
-
---==============================================================================
---= CONSTANTS
---==============================================================================
-
---------------------------------------------------------------------------------
--- Data Types
---------------------------------------------------------------------------------
-
-type FrozenState
-  = Frozen
-  | Thawed
-  | Restricted
-
-type Range
-  = Range Float Float
-
-type Constant
-  = CNumber FrozenState (Maybe Range) Float
-  | CString String
-  | CBool Bool
-
---------------------------------------------------------------------------------
--- Numbers
---------------------------------------------------------------------------------
+-- TODO fix widgets
 
 numParser : Parser Float
 numParser =
@@ -254,25 +182,18 @@ numParser =
         |= sign
         |= float
 
-number_ : Parser Constant
+number_ : Parser Num
 number_ =
   let
     frozenAnnotation =
       inContext "frozen annotation" <|
-        oneOf
-          [ succeed Frozen
-              |. symbol "!"
-          , succeed Thawed
-              |. symbol "?"
-          , succeed Restricted
-              |. symbol "~"
-          , succeed Thawed -- default
-          ]
+        oneOf <|
+          List.map symbol [frozen, unann, thawed, assignOnlyOnce]
     rangeAnnotation =
       inContext "range annotation" <|
         oneOf
           [ map Just <|
-              succeed Range
+              succeed (,)
                 |. symbol "{"
                 |= numParser
                 |. symbol "-"
@@ -282,27 +203,31 @@ number_ =
           ]
   in
     inContext "number" <|
-      succeed (\val frozen range -> CNumber frozen range val)
+      succeed (\val frozen range -> val) --CNumber frozen range val)
         |= try numParser
         |= frozenAnnotation
         |= rangeAnnotation
 
-number : Parser (WithInfo Constant)
+number : Parser (WithInfo Num)
 number =
   trackInfo number_
+
+--==============================================================================
+--= BASE VALUES
+--==============================================================================
 
 --------------------------------------------------------------------------------
 -- Strings
 --------------------------------------------------------------------------------
 
-string_ : Parser Constant
+string_ : Parser EBaseVal
 string_ =
   let
     stringHelper quoteChar =
       let
         quoteString = fromChar quoteChar
       in
-        succeed CString
+        succeed (EString quoteString)
           |. symbol quoteString
           |= keep zeroOrMore (\c -> c /= quoteChar)
           |. symbol quoteString
@@ -310,7 +235,7 @@ string_ =
     inContext "string" <|
       oneOf <| List.map stringHelper ['\'', '"'] -- " -- fix syntax highlighting
 
-string : Parser (WithInfo Constant)
+string : Parser (WithInfo EBaseVal)
 string =
   trackInfo string_
 
@@ -318,37 +243,53 @@ string =
 -- Bools
 --------------------------------------------------------------------------------
 
-bool_ : Parser Constant
+bool_ : Parser EBaseVal
 bool_ =
-  map CBool <|
+  map EBool <|
     oneOf <|
       [ map (always True) <| keyword "true"
       , map (always False) <| keyword "false"
       ]
 
-bool : Parser (WithInfo Constant)
+bool : Parser (WithInfo EBaseVal)
 bool =
   trackInfo bool_
 
 --------------------------------------------------------------------------------
--- General Constants
+-- Nulls
 --------------------------------------------------------------------------------
 
-constant_ : Parser Constant
-constant_ =
+null_ : Parser EBaseVal
+null_ =
+  map (always ENull) <| keyword "null"
+
+null : Parser (WithInfo EBaseVal)
+null =
+  trackInfo null_
+
+--------------------------------------------------------------------------------
+-- General Base Values
+--------------------------------------------------------------------------------
+
+baseValue_ : Parser EBaseVal
+baseValue_ =
   oneOf
-    [ number_
-    , string_
+    [ string_
     , bool_
+    , null_
     ]
 
-constant : Parser (WithInfo Constant)
-constant =
-  trackInfo constant_
+baseValue : Parser (WithInfo EBaseVal)
+baseValue =
+  trackInfo baseValue_
 
 --==============================================================================
 --= IDENTIFIERS
 --==============================================================================
+
+--------------------------------------------------------------------------------
+-- General Identifiers
+--------------------------------------------------------------------------------
 
 validIdentifierFirstChar : Char -> Bool
 validIdentifierFirstChar c =
@@ -387,52 +328,56 @@ keywords =
     , "typ"
     ]
 
-identifierString_ : Parser Identifier
+identifierString_ : Parser Ident
 identifierString_ =
   variable validIdentifierFirstChar validIdentifierRestChar keywords
 
-identifierString : Parser (WithInfo Identifier)
+identifierString : Parser (WithInfo Ident)
 identifierString =
   trackInfo identifierString_
+
+--------------------------------------------------------------------------------
+-- Lower Identifiers
+--------------------------------------------------------------------------------
+
+lowerIdentifierString_ : Parser Ident
+lowerIdentifierString_ =
+  variable Char.isLower validIdentifierRestChar keywords
+
+lowerIdentifierString : Parser (WithInfo Ident)
+lowerIdentifierString =
+  trackInfo lowerIdentifierString_
+
+--------------------------------------------------------------------------------
+-- Upper Identifiers
+--------------------------------------------------------------------------------
+
+upperIdentifierString_ : Parser Ident
+upperIdentifierString_ =
+  variable Char.isUpper validIdentifierRestChar keywords
+
+upperIdentifierString : Parser (WithInfo Ident)
+upperIdentifierString =
+  trackInfo upperIdentifierString_
 
 --==============================================================================
 --= PATTERNS
 --==============================================================================
 
 --------------------------------------------------------------------------------
--- Data Types
+-- Variable Pattern
 --------------------------------------------------------------------------------
 
-type alias Identifier = String
+variablePattern_ : Parser Pat_
+variablePattern_ =
+  delayedCommitMap
+    (\ws name -> PVar ws name noWidgetDecl)
+    spaces
+    identifierString_
 
-type Pat__
-  = PIdentifier WS Identifier
-  | PConstant WS Constant
-  | PList WS (List Pat) WS (Maybe Pat) WS
-  | PAs WS Identifier WS Pat
-
-type alias PId  = Int
-type alias Pat_ = { p__ : Pat__, pid : PId  }
-type alias Pat = WithInfo Pat_
-
-pat_ : Pat__ -> Pat_
-pat_ p = { p__ = p, pid = -1 }
-
-mapPat_ : Parser Pat__ -> Parser Pat_
-mapPat_ = map pat_
-
---------------------------------------------------------------------------------
--- Identifier Pattern
---------------------------------------------------------------------------------
-
-identifierPattern_ : Parser Pat_
-identifierPattern_ =
-  mapPat_ <|
-    delayedCommitMap PIdentifier spaces identifierString_
-
-identifierPattern : Parser Pat
-identifierPattern =
-  trackInfo identifierPattern_
+variablePattern : Parser Pat
+variablePattern =
+  trackInfo variablePattern_
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
@@ -440,12 +385,23 @@ identifierPattern =
 
 constantPattern_ : Parser Pat_
 constantPattern_ =
-  mapPat_ <|
-    delayedCommitMap PConstant spaces constant_
+  delayedCommitMap PConst spaces number_
 
 constantPattern : Parser Pat
 constantPattern =
   trackInfo constantPattern_
+
+--------------------------------------------------------------------------------
+-- Base Value Pattern
+--------------------------------------------------------------------------------
+
+baseValuePattern_ : Parser Pat_
+baseValuePattern_ =
+  delayedCommitMap PBase spaces baseValue_
+
+baseValuePattern : Parser Pat
+baseValuePattern =
+  trackInfo baseValuePattern_
 
 --------------------------------------------------------------------------------
 -- Pattern Lists
@@ -453,26 +409,25 @@ constantPattern =
 
 patternList_ : Parser Pat_
 patternList_ =
-  mapPat_ <|
-    lazy <| \_ ->
-      genericList
-        { generalContext =
-            "pattern list"
-        , listLiteralContext =
-            "pattern list literal"
-        , multiConsContext =
-            "pattern multi cons literal"
-        , listLiteralCombiner =
-            ( \wsStart heads wsEnd ->
-                PList wsStart heads "" Nothing wsEnd
-            )
-        , multiConsCombiner =
-            ( \wsStart heads wsBar tail wsEnd ->
-                PList wsStart heads wsBar (Just tail) wsEnd
-            )
-        , elem =
-            pattern
-        }
+  lazy <| \_ ->
+    genericList
+      { generalContext =
+          "pattern list"
+      , listLiteralContext =
+          "pattern list literal"
+      , multiConsContext =
+          "pattern multi cons literal"
+      , listLiteralCombiner =
+          ( \wsStart heads wsEnd ->
+              PList wsStart heads "" Nothing wsEnd
+          )
+      , multiConsCombiner =
+          ( \wsStart heads wsBar tail wsEnd ->
+              PList wsStart heads wsBar (Just tail) wsEnd
+          )
+      , elem =
+          pattern
+      }
 
 patternList : Parser Pat
 patternList =
@@ -484,20 +439,19 @@ patternList =
 
 asPattern_ : Parser Pat_
 asPattern_ =
-  mapPat_ <|
-    inContext "as pattern" <|
-      lazy <| \_ ->
-        delayedCommitMap
-        ( \(wsStart, name, wsAt) pat ->
-            PAs wsStart name wsAt pat
-        )
-        ( succeed (,,)
-            |= spaces
-            |= identifierString_
-            |= spaces
-            |. symbol "@"
-        )
-        pattern
+  inContext "as pattern" <|
+    lazy <| \_ ->
+      delayedCommitMap
+      ( \(wsStart, name, wsAt) pat ->
+          PAs wsStart name wsAt pat
+      )
+      ( succeed (,,)
+          |= spaces
+          |= identifierString_
+          |= spaces
+          |. symbol "@"
+      )
+      pattern
 
 asPattern : Parser Pat
 asPattern =
@@ -514,7 +468,8 @@ pattern_ =
       [ lazy <| \_ -> patternList_
       , lazy <| \_ -> asPattern_
       , constantPattern_
-      , identifierPattern_
+      , baseValuePattern_
+      , variablePattern_
       ]
 
 pattern : Parser Pat
@@ -524,29 +479,6 @@ pattern =
 --==============================================================================
 --= TYPES
 --==============================================================================
-
---------------------------------------------------------------------------------
--- Data Types
---------------------------------------------------------------------------------
-
-type OneOrMany a
-  = One a
-  | Many WS (List a) WS
-
-type Type_
-  = TNull WS
-  | TNum WS
-  | TBool WS
-  | TString WS
-  | TAlias WS Identifier
-  | TFunction WS (List Type) WS
-  | TList WS Type WS
-  | TTuple WS (List Type) WS (Maybe Type) WS
-  | TForall WS (OneOrMany (WS, Identifier)) Type WS
-  | TUnion WS (List Type) WS
-  | TWildcard WS
-
-type alias Type = WithInfo Type_
 
 --------------------------------------------------------------------------------
 -- Base Types
@@ -596,17 +528,30 @@ stringType =
   trackInfo stringType_
 
 --------------------------------------------------------------------------------
--- Aliased Types
+-- Named Types
 --------------------------------------------------------------------------------
 
-aliasType_ : Parser Type_
-aliasType_ =
-  inContext "alias type" <|
-    delayedCommitMap TAlias spaces identifierString_
+namedType_ : Parser Type_
+namedType_ =
+  inContext "named type" <|
+    delayedCommitMap TNamed spaces upperIdentifierString_
 
-aliasType : Parser Type
-aliasType =
-  trackInfo aliasType_
+namedType : Parser Type
+namedType =
+  trackInfo namedType_
+
+--------------------------------------------------------------------------------
+-- Variable Types
+--------------------------------------------------------------------------------
+
+variableType_ : Parser Type_
+variableType_ =
+  inContext "variable type" <|
+    delayedCommitMap TVar spaces lowerIdentifierString_
+
+variableType : Parser Type
+variableType =
+  trackInfo variableType_
 
 --------------------------------------------------------------------------------
 -- Function Type
@@ -614,9 +559,9 @@ aliasType =
 
 functionType_ : Parser Type_
 functionType_ =
-  inContext "function type" <|
-    lazy <| \_ ->
-      parenBlock TFunction <|
+  lazy <| \_ ->
+    inContext "function type" <|
+      parenBlock TArrow <|
         succeed identity
           |. keyword "->"
           |= repeat oneOrMore typ
@@ -742,6 +687,7 @@ wildcardType =
 
 typ_ : Parser Type_
 typ_ =
+  lazy <| \_ ->
   inContext "type" <|
     oneOf
       [ nullType_
@@ -754,7 +700,8 @@ typ_ =
       , lazy <| \_ -> tupleType_
       , lazy <| \_ -> forallType_
       , lazy <| \_ -> unionType_
-      , aliasType_
+      , namedType_
+      , variableType_
       ]
 
 typ : Parser Type
@@ -766,64 +713,8 @@ typ =
 --==============================================================================
 
 --------------------------------------------------------------------------------
--- Data Types
+-- General Expression Helpers
 --------------------------------------------------------------------------------
-
-type Op
-  = Pi
-  | Cos
-  | Sin
-  | Arccos
-  | Arcsin
-  | Floor
-  | Ceiling
-  | Round
-  | ToString
-  | Sqrt
-  | Explode
-  | Plus
-  | Minus
-  | Multiply
-  | Divide
-  | LessThan
-  | Equal
-  | Mod
-  | Pow
-  | Arctan2
-
-type Branch
-  = Branch WS Pat Exp WS
-
-type TBranch
-  = TBranch WS Type Exp WS
-
-type LetKind
-  = Let | Def
-
-type Exp__
-  = EIdentifier WS Identifier
-  | EConstant WS Constant
-  | EOp WS Op (List Exp) WS
-  | EIf WS Exp Exp Exp WS
-  -- heads / tail
-  | EList WS (List Exp) WS (Maybe Exp) WS
-  | ECase WS Exp (List Branch) WS
-  | ETypeCase WS Pat (List TBranch) WS
-  | EFunction WS (List Pat) Exp WS
-  | EFunctionApplication WS Exp (List Exp) WS
-  -- type of let / recursive / pattern / value / inner
-  | ELet WS LetKind Bool Pat Exp Exp WS
-  | ETypeDeclaration WS Pat Type Exp WS
-  | ETypeAnnotation WS Exp WS Type WS
-  | EComment WS String Exp
-  | EOption String String
-
-type alias EId  = Int
-type alias Exp_ = { e__ : Exp__, eid : EId  }
-type alias Exp = WithInfo Exp_
-
-exp_ : Exp__ -> Exp_
-exp_ e = { e__ = e, eid = -1 }
 
 mapExp_ : Parser Exp__ -> Parser Exp_
 mapExp_ = map exp_
@@ -832,27 +723,46 @@ mapExp_ = map exp_
 -- Identifier Expressions
 --------------------------------------------------------------------------------
 
-identifierExpression_ : Parser Exp_
-identifierExpression_ =
+variableExpression_ : Parser Exp_
+variableExpression_ =
   mapExp_ <|
-    delayedCommitMap EIdentifier spaces identifierString_
+    delayedCommitMap EVar spaces identifierString_
 
-identifierExpression : Parser Exp
-identifierExpression =
-  trackInfo identifierExpression_
+variableExpression : Parser Exp
+variableExpression =
+  trackInfo variableExpression_
 
 --------------------------------------------------------------------------------
 -- Constant Expressions
 --------------------------------------------------------------------------------
 
+-- TODO fix widgets
+
 constantExpression_ : Parser Exp_
 constantExpression_ =
   mapExp_ <|
-    delayedCommitMap EConstant spaces constant_
+    delayedCommitMap
+      (\ws num -> EConst ws num dummyLoc noWidgetDecl)
+      spaces
+      number_
 
 constantExpression : Parser Exp
 constantExpression =
   trackInfo constantExpression_
+
+--------------------------------------------------------------------------------
+-- Base Value Expressions
+--------------------------------------------------------------------------------
+
+baseValueExpression_ : Parser Exp_
+baseValueExpression_ =
+  mapExp_ <|
+    delayedCommitMap EBase spaces baseValue_
+
+baseValueExpression : Parser Exp
+baseValueExpression =
+  trackInfo baseValueExpression_
+
 
 --------------------------------------------------------------------------------
 -- Primitive Operators
@@ -862,7 +772,7 @@ operator_ : Parser Exp_
 operator_ =
   mapExp_ <|
     let
-      op =
+      op_ =
         oneOf
           [ succeed Pi
             |. keyword "pi"
@@ -870,17 +780,17 @@ operator_ =
             |. keyword "cos"
           , succeed Sin
             |. keyword "sin"
-          , succeed Arccos
+          , succeed ArcCos
             |. keyword "arccos"
-          , succeed Arcsin
+          , succeed ArcSin
             |. keyword "arcsin"
           , succeed Floor
             |. keyword "floor"
-          , succeed Ceiling
+          , succeed Ceil
             |. keyword "ceiling"
           , succeed Round
             |. keyword "round"
-          , succeed ToString
+          , succeed ToStr
             |. keyword "toString"
           , succeed Sqrt
             |. keyword "sqrt"
@@ -890,27 +800,29 @@ operator_ =
             |. keyword "+"
           , succeed Minus
             |. keyword "-"
-          , succeed Multiply
+          , succeed Mult
             |. keyword "*"
-          , succeed Divide
+          , succeed Div
             |. keyword "/"
-          , succeed LessThan
+          , succeed Lt
             |. keyword "<"
-          , succeed Equal
+          , succeed Eq
             |. keyword "="
           , succeed Mod
             |. keyword "mod"
           , succeed Pow
             |. keyword "pow"
-          , succeed Arctan2
+          , succeed ArcTan2
             |. keyword "arctan2"
           ]
+      op =
+        trackInfo op_
     in
       inContext "operator" <|
         lazy <| \_ ->
           parenBlock
-            ( \wsStart (op, args) wsEnd ->
-                EOp wsStart op args wsEnd
+            ( \wsStart (opName, args) wsEnd ->
+                EOp wsStart opName args wsEnd
             )
             ( succeed (,)
                 |= op
@@ -983,8 +895,8 @@ list =
 genericCase_
   :  String
   -> String
-  -> (WS -> a -> (List c) -> WS -> Exp__)
-  -> (WS -> b -> Exp -> WS -> c)
+  -> (WS -> a -> (List (WithInfo branch)) -> WS -> Exp__)
+  -> (WS -> b -> Exp -> WS -> branch)
   -> Parser a
   -> Parser b
   -> Parser Exp_
@@ -993,14 +905,15 @@ genericCase_ context kword combiner branchCombiner parser branchParser =
     path =
       inContext (context ++ " path") <|
         lazy <| \_ ->
-          parenBlock
-            ( \wsStart (p, e) wsEnd ->
-                branchCombiner wsStart p e wsEnd
-            )
-            ( succeed (,)
-                |= branchParser
-                |= expr
-            )
+          trackInfo <|
+            parenBlock
+              ( \wsStart (p, e) wsEnd ->
+                  branchCombiner wsStart p e wsEnd
+              )
+              ( succeed (,)
+                  |= branchParser
+                  |= expr
+              )
   in
     mapExp_ <|
       inContext context <|
@@ -1023,7 +936,7 @@ caseExpression_ : Parser Exp_
 caseExpression_ =
     lazy <| \_ ->
       genericCase_ "case expression" "case"
-                   ECase Branch expr pattern
+                   ECase Branch_ expr pattern
 
 caseExpression : Parser Exp
 caseExpression =
@@ -1037,7 +950,7 @@ typeCaseExpression_ : Parser Exp_
 typeCaseExpression_ =
     lazy <| \_ ->
       genericCase_ "type case expression" "typecase"
-                   ETypeCase TBranch pattern typ
+                   ETypeCase TBranch_ pattern typ
 
 typeCaseExpression : Parser Exp
 typeCaseExpression =
@@ -1061,7 +974,7 @@ function_ =
         lazy <| \_ ->
           parenBlock
             ( \wsStart (params, body) wsEnd ->
-                EFunction wsStart params body wsEnd
+                EFun wsStart params body wsEnd
             )
             ( succeed (,)
                 |. symbol "\\"
@@ -1084,7 +997,7 @@ functionApplication_ =
       lazy <| \_ ->
         parenBlock
           ( \wsStart (f, x) wsEnd ->
-              EFunctionApplication wsStart f x wsEnd
+              EApp wsStart f x wsEnd
           )
           ( succeed (,)
               |= expr
@@ -1181,9 +1094,11 @@ option_ =
   mapExp_ <|
     succeed EOption
       |. symbol "#"
-      |= keep oneOrMore validOptionChar
-      |= keep oneOrMore validOptionChar
-      |. ignoreUntil "\n"
+      |= spaces
+      |= (trackInfo <| keep oneOrMore validOptionChar)
+      |= spaces
+      |= (trackInfo <| keep oneOrMore validOptionChar)
+      |= expr
 
 option : Parser Exp
 option =
@@ -1199,12 +1114,12 @@ typeDeclaration_ =
     inContext "type declaration" <|
       delayedCommitMap
         ( \wsStart (pat, t, wsEnd, rest) ->
-            ETypeDeclaration wsStart pat t rest wsEnd
+            ETyp wsStart pat t rest wsEnd
         )
         ( openBlock "(" )
         ( succeed (,,,)
             |. keyword "typ "
-            |= identifierPattern
+            |= variablePattern
             |= typ
             |= closeBlock ")"
             |= expr
@@ -1225,7 +1140,7 @@ typeAnnotation_ =
       lazy <| \_ ->
         parenBlock
           ( \wsStart (e, wsColon, t) wsEnd ->
-              ETypeAnnotation wsStart e wsColon t wsEnd
+              EColonType wsStart e wsColon t wsEnd
           )
           ( delayedCommitMap
               ( \(e, wsColon) t ->
@@ -1277,6 +1192,7 @@ expr_ =
   inContext "expression" <|
     oneOf
       [ constantExpression_
+      , baseValueExpression_
       , lazy <| \_ -> operator_
       , lazy <| \_ -> conditional_
       , lazy <| \_ -> letBinding_
@@ -1288,7 +1204,7 @@ expr_ =
       , lazy <| \_ -> function_
       , lazy <| \_ -> functionApplication_
       , lazy <| \_ -> comment_
-      , identifierExpression_
+      , variableExpression_
       ]
 
 expr : Parser Exp
@@ -1367,12 +1283,12 @@ topLevelTypeDeclaration_ =
     parenBlock
       ( \wsStart (pat, t) wsEnd ->
           ( \rest ->
-              exp_ <| ETypeDeclaration wsStart pat t rest wsEnd
+              exp_ <| ETyp wsStart pat t rest wsEnd
           )
       )
       ( succeed (,)
           |. keyword "typ "
-          |= identifierPattern
+          |= variablePattern
           |= typ
       )
 
@@ -1440,4 +1356,4 @@ program =
 --==============================================================================
 
 parse : String -> Result Error Exp
-parse = run program
+parse = run expr

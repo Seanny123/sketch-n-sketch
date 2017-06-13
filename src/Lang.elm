@@ -7,10 +7,68 @@ import Set
 import Debug
 import Regex
 
-import OurParser2 as P
 import Utils
 
-------------------------------------------------------------------------------
+--==============================================================================
+--= DATA TYPES
+--==============================================================================
+
+--------------------------------------------------------------------------------
+-- Pos
+--------------------------------------------------------------------------------
+
+type alias Pos =
+  { line : Int
+  , col : Int
+  }
+
+startPos : Pos
+startPos =
+  { line = 1
+  , col = 1
+  }
+
+dummyPos : Pos
+dummyPos =
+  { line = -1
+  , col = -1
+  }
+
+posFromRowCol : (Int, Int) -> Pos
+posFromRowCol (row, col) =
+  { line = row
+  , col = col
+  }
+
+--------------------------------------------------------------------------------
+-- WithPos
+--------------------------------------------------------------------------------
+
+type alias WithPos a =
+  { val : a
+  , pos : Pos
+  }
+
+--------------------------------------------------------------------------------
+-- WithInfo
+--------------------------------------------------------------------------------
+
+type alias WithInfo a =
+  { val : a
+  , start : Pos
+  , end : Pos
+  }
+
+withInfo : a -> Pos -> Pos -> WithInfo a
+withInfo x start end =
+  { val = x
+  , start = start
+  , end = end
+  }
+
+--------------------------------------------------------------------------------
+-- Miscellaneous
+--------------------------------------------------------------------------------
 
 type alias Loc = (LocId, Frozen, Ident)  -- "" rather than Nothing b/c comparable
 type alias LocId = Int
@@ -24,12 +82,16 @@ type alias Frozen = String -- b/c comparable
 
 type alias LocSet = Set.Set Loc
 
-type alias Pat     = P.WithInfo Pat_
-type alias Exp     = P.WithInfo Exp_
-type alias Type    = P.WithInfo Type_
-type alias Op      = P.WithInfo Op_
-type alias Branch  = P.WithInfo Branch_
-type alias TBranch = P.WithInfo TBranch_
+--------------------------------------------------------------------------------
+-- Miscellaneous
+--------------------------------------------------------------------------------
+
+type alias Pat     = WithInfo Pat_
+type alias Exp     = WithInfo Exp_
+type alias Type    = WithInfo Type_
+type alias Op      = WithInfo Op_
+type alias Branch  = WithInfo Branch_
+type alias TBranch = WithInfo TBranch_
 
 -- TODO add constant literals to patterns, and match 'svg'
 type Pat_
@@ -79,7 +141,7 @@ type Exp__
   | ETypeCase WS Pat (List TBranch) WS
   | ELet WS LetKind Rec Pat Exp Exp WS
   | EComment WS String Exp
-  | EOption WS (P.WithInfo String) WS (P.WithInfo String) Exp
+  | EOption WS (WithInfo String) WS (WithInfo String) Exp
   | ETyp WS Pat Type Exp WS
   | EColonType WS Exp WS Type WS
   | ETypeAlias WS Pat Type Exp WS
@@ -119,11 +181,11 @@ type TBranch_ = TBranch_ WS Type Exp WS
 type LetKind = Let | Def
 type alias Rec = Bool
 
-type alias WidgetDecl = P.WithInfo WidgetDecl_
+type alias WidgetDecl = WithInfo WidgetDecl_
 
 type WidgetDecl_
-  = IntSlider (P.WithInfo Int) Token (P.WithInfo Int) Caption
-  | NumSlider (P.WithInfo Num) Token (P.WithInfo Num) Caption
+  = IntSlider (WithInfo Int) Token (WithInfo Int) Caption
+  | NumSlider (WithInfo Num) Token (WithInfo Num) Caption
   | NoWidgetDecl -- rather than Nothing, to work around parser types
 
 type Axis = X | Y
@@ -137,9 +199,9 @@ type Widget
 
 type alias Widgets = List Widget
 
-type alias Token = P.WithInfo String
+type alias Token = WithInfo String
 
-type alias Caption = Maybe (P.WithInfo String)
+type alias Caption = Maybe (WithInfo String)
 
 type alias VTrace = List EId
 type alias Val    = { v_ : Val_, vtrace : VTrace }
@@ -173,6 +235,10 @@ type Trace = TrLoc Loc | TrOp Op_ (List Trace)
 
 type alias Env = List (Ident, Val)
 type alias Backtrace = List Exp
+
+--==============================================================================
+--= FUNCTIONS
+--==============================================================================
 
 ------------------------------------------------------------------------------
 -- Unparsing
@@ -277,7 +343,7 @@ mapValField f r = { r | val = f r.val }
 mapFoldExp : (Exp -> a -> (Exp, a)) -> a -> Exp -> (Exp, a)
 mapFoldExp f initAcc e =
   let recurse = mapFoldExp f in
-  let wrap e__ = P.WithInfo (Exp_ e__ e.val.eid) e.start e.end in
+  let wrap e__ = WithInfo (Exp_ e__ e.val.eid) e.start e.end in
   let wrapAndMap = f << wrap in
   -- Make sure exps are left-to-right so they are visted right-to-left.
   let recurseAll initAcc exps =
@@ -444,7 +510,7 @@ replaceExpNodeE__ByEId eid newNode root =
 mapType : (Type -> Type) -> Type -> Type
 mapType f tipe =
   let recurse = mapType f in
-  let wrap t_ = P.WithInfo t_ tipe.start tipe.end in
+  let wrap t_ = WithInfo t_ tipe.start tipe.end in
   case tipe.val of
     TNum _       -> f tipe
     TBool _      -> f tipe
@@ -577,7 +643,7 @@ valToTrace v = case v.v_ of
 -- Expression Substitutions
 
 type alias Subst = Dict.Dict LocId Num
-type alias SubstPlus = Dict.Dict LocId (P.WithInfo Num)
+type alias SubstPlus = Dict.Dict LocId (WithInfo Num)
 type alias SubstMaybeNum = Dict.Dict LocId (Maybe Num)
 
 type alias ESubst = Dict.Dict EId Exp__
@@ -759,8 +825,9 @@ errorPrefix = "[Little Error]" -- NOTE: same as errorPrefix in Native/codeBox.js
 crashWithMsg s  = Debug.crash <| errorPrefix ++ "\n\n" ++ s
 errorMsg s      = Err <| errorPrefix ++ "\n\n" ++ s
 
-strPos = P.strPos
-
+strPos p =
+  let (i,j) = (toString p.line, toString p.col) in
+  "(Line:" ++ i ++ " Col:" ++ j ++ ")"
 
 ------------------------------------------------------------------------------
 -- Abstract Syntax Helpers
@@ -773,8 +840,8 @@ val = flip Val [-1]
 exp_ : Exp__ -> Exp_
 exp_ = flip Exp_ (-1)
 
-withDummyRange x  = P.WithInfo x P.dummyPos P.dummyPos
-withDummyPos e__  = P.WithInfo (exp_ e__) P.dummyPos P.dummyPos
+withDummyRange x  = WithInfo x dummyPos dummyPos
+withDummyPos e__  = WithInfo (exp_ e__) dummyPos dummyPos
   -- TODO rename withDummyPos
 
 replaceE__ : Exp -> Exp__ -> Exp
@@ -1097,7 +1164,7 @@ unindent exp =
 indent : String -> Exp -> Exp
 indent spaces e =
   -- let recurse = indent spaces in
-  -- let wrap e__ = P.WithInfo (Exp_ e__ e.val.eid) e.start e.end in
+  -- let wrap e__ = WithInfo (Exp_ e__ e.val.eid) e.start e.end in
   let processWS ws =
     ws |> String.reverse
        |> Regex.replace (Regex.AtMost 1) (Regex.regex "\n") (\_ -> spaces ++ "\n")
