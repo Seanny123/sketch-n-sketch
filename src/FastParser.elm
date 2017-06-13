@@ -687,7 +687,6 @@ wildcardType =
 
 typ_ : Parser Type_
 typ_ =
-  lazy <| \_ ->
   inContext "type" <|
     oneOf
       [ nullType_
@@ -706,7 +705,8 @@ typ_ =
 
 typ : Parser Type
 typ =
-  trackInfo typ_
+  lazy <| \_ ->
+    trackInfo typ_
 
 --==============================================================================
 --= EXPRESSIONS
@@ -1209,7 +1209,8 @@ expr_ =
 
 expr : Parser Exp
 expr =
-  trackInfo expr_
+  lazy <| \_ ->
+    trackInfo expr_
 
 --==============================================================================
 --= TOP-LEVEL EXPRESSIONS
@@ -1356,4 +1357,4 @@ program =
 --==============================================================================
 
 parse : String -> Result Error Exp
-parse = run expr
+parse = run program
