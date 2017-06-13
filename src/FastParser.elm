@@ -239,7 +239,7 @@ frozenAnnotation : Parser Frozen
 frozenAnnotation =
   inContext "frozen annotation" <|
     oneOf <|
-      List.map token [frozen, unann, thawed, assignOnlyOnce]
+      List.map token [frozen, thawed, assignOnlyOnce, unann]
 
 --==============================================================================
 --= BASE VALUES
@@ -320,10 +320,6 @@ baseValue =
 -- General Identifiers
 --------------------------------------------------------------------------------
 
-validIdentifierFirstChar : Char -> Bool
-validIdentifierFirstChar c =
-  Char.isLower c || Char.isUpper c || c == '_'
-
 validIdentifierRestChar : Char -> Bool
 validIdentifierRestChar c =
   Char.isLower c || Char.isUpper c || Char.isDigit c || c == '_' || c == '\''
@@ -357,37 +353,37 @@ keywords =
     , "typ"
     ]
 
-identifierString_ : Parser Ident
-identifierString_ =
-  variable validIdentifierFirstChar validIdentifierRestChar keywords
-
-identifierString : Parser (WithInfo Ident)
-identifierString =
-  trackInfo identifierString_
-
 --------------------------------------------------------------------------------
--- Lower Identifiers
+-- Variable Identifiers
 --------------------------------------------------------------------------------
 
-lowerIdentifierString_ : Parser Ident
-lowerIdentifierString_ =
-  variable Char.isLower validIdentifierRestChar keywords
+validVariableIdentifierFirstChar : Char -> Bool
+validVariableIdentifierFirstChar c =
+  Char.isLower c || c == '_'
 
-lowerIdentifierString : Parser (WithInfo Ident)
-lowerIdentifierString =
-  trackInfo lowerIdentifierString_
+variableIdentifierString_ : Parser Ident
+variableIdentifierString_ =
+  variable validVariableIdentifierFirstChar validIdentifierRestChar keywords
+
+variableIdentifierString : Parser (WithInfo Ident)
+variableIdentifierString =
+  trackInfo variableIdentifierString_
 
 --------------------------------------------------------------------------------
--- Upper Identifiers
+-- Type Identifiers
 --------------------------------------------------------------------------------
 
-upperIdentifierString_ : Parser Ident
-upperIdentifierString_ =
-  variable Char.isUpper validIdentifierRestChar keywords
+validTypeIdentifierFirstChar : Char -> Bool
+validTypeIdentifierFirstChar c =
+  Char.isUpper c
 
-upperIdentifierString : Parser (WithInfo Ident)
-upperIdentifierString =
-  trackInfo upperIdentifierString_
+typeIdentifierString_ : Parser Ident
+typeIdentifierString_ =
+  variable validTypeIdentifierFirstChar validIdentifierRestChar keywords
+
+typeIdentifierString : Parser (WithInfo Ident)
+typeIdentifierString =
+  trackInfo typeIdentifierString_
 
 --==============================================================================
 --= PATTERNS
@@ -402,11 +398,26 @@ variablePattern_ =
   delayedCommitMap
     (\ws name -> PVar ws name noWidgetDecl)
     spaces
-    identifierString_
+    variableIdentifierString_
 
 variablePattern : Parser Pat
 variablePattern =
   trackInfo variablePattern_
+
+--------------------------------------------------------------------------------
+-- Type Pattern (SPECIAL-USE ONLY; not included in `pattern`)
+--------------------------------------------------------------------------------
+
+typePattern_ : Parser Pat_
+typePattern_ =
+  delayedCommitMap
+    (\ws name -> PVar ws name noWidgetDecl)
+    spaces
+    typeIdentifierString_
+
+typePattern : Parser Pat
+typePattern =
+  trackInfo typePattern_
 
 --------------------------------------------------------------------------------
 -- Constant Pattern
@@ -476,7 +487,7 @@ asPattern_ =
       )
       ( succeed (,,)
           |= spaces
-          |= identifierString_
+          |= variableIdentifierString_
           |= spaces
           |. symbol "@"
       )
@@ -563,7 +574,7 @@ stringType =
 namedType_ : Parser Type_
 namedType_ =
   inContext "named type" <|
-    delayedCommitMap TNamed spaces upperIdentifierString_
+    delayedCommitMap TNamed spaces typeIdentifierString_
 
 namedType : Parser Type
 namedType =
@@ -576,7 +587,7 @@ namedType =
 variableType_ : Parser Type_
 variableType_ =
   inContext "variable type" <|
-    delayedCommitMap TVar spaces lowerIdentifierString_
+    delayedCommitMap TVar spaces variableIdentifierString_
 
 variableType : Parser Type
 variableType =
@@ -654,7 +665,7 @@ forallType_ : Parser Type_
 forallType_ =
   let
     wsIdentifierPair =
-      delayedCommitMap (,) spaces identifierString_
+      delayedCommitMap (,) spaces variableIdentifierString_
     quantifiers =
       oneOf
         [ inContext "forall type (one)" <|
@@ -755,7 +766,7 @@ mapExp_ = map exp_
 variableExpression_ : Parser Exp_
 variableExpression_ =
   mapExp_ <|
-    delayedCommitMap EVar spaces identifierString_
+    delayedCommitMap EVar spaces variableIdentifierString_
 
 variableExpression : Parser Exp
 variableExpression =
@@ -1166,6 +1177,33 @@ typeDeclaration =
   trackInfo typeDeclaration_
 
 --------------------------------------------------------------------------------
+-- Type Aliases
+--------------------------------------------------------------------------------
+
+typeAlias_ : Parser Exp_
+typeAlias_ =
+  mapExp_ <|
+    inContext "type alias" <|
+      delayedCommitMap
+        ( \(wsStart, pat) (t, wsEnd, rest) ->
+            ETypeAlias wsStart pat t rest wsEnd
+        )
+        ( succeed (,)
+            |= openBlock "("
+            |. keyword "def "
+            |= typePattern
+        )
+        ( succeed (,,)
+            |= typ
+            |= closeBlock ")"
+            |= expr
+        )
+
+typeAlias : Parser Exp
+typeAlias =
+  trackInfo typeAlias_
+
+--------------------------------------------------------------------------------
 -- Type Annotations
 --------------------------------------------------------------------------------
 
@@ -1229,7 +1267,7 @@ expr_ =
     oneOf
       [ constantExpression_
       , baseValueExpression_
-      , lazy <| \_ -> operator_
+      , lazy <| \_ -> typeAlias_
       , lazy <| \_ -> conditional_
       , lazy <| \_ -> letBinding_
       , lazy <| \_ -> caseExpression_
@@ -1239,6 +1277,7 @@ expr_ =
       , lazy <| \_ -> list_
       , lazy <| \_ -> function_
       , lazy <| \_ -> functionApplication_
+      , lazy <| \_ -> operator_
       , lazy <| \_ -> comment_
       , variableExpression_
       ]
@@ -1334,6 +1373,34 @@ topLevelTypeDeclaration =
   trackInfo topLevelTypeDeclaration_
 
 --------------------------------------------------------------------------------
+-- Top Level Type Aliases
+--------------------------------------------------------------------------------
+
+topLevelTypeAlias_ : Parser TopLevelExp_
+topLevelTypeAlias_ =
+  inContext "top-level type alias" <|
+    delayedCommitMap
+      ( \(wsStart, pat) (t, wsEnd) ->
+          ( \rest ->
+              exp_ <| ETypeAlias wsStart pat t rest wsEnd
+          )
+      )
+      ( succeed (,)
+          |= openBlock "("
+          |. keyword "def "
+          |= typePattern
+      )
+      ( succeed (,)
+          |= typ
+          |= closeBlock ")"
+      )
+
+
+topLevelTypeAlias : Parser TopLevelExp
+topLevelTypeAlias =
+  trackInfo topLevelTypeAlias_
+
+--------------------------------------------------------------------------------
 -- Top-Level Comments
 --------------------------------------------------------------------------------
 
@@ -1365,7 +1432,8 @@ topLevelExp_ : Parser TopLevelExp_
 topLevelExp_ =
   inContext "top-level expression" <|
     oneOf
-      [ topLevelDef_
+      [ topLevelTypeAlias_
+      , topLevelDef_
       , topLevelTypeDeclaration_
       , topLevelComment_
       ]
@@ -1396,7 +1464,7 @@ parseE_ : (Exp -> Exp) -> String -> Result Error Exp
 parseE_ f = run (map f program)
 
 parseE : String -> Result Error Exp
-parseE = parseE_ freshen
+parseE = parseE_ identity --freshen TODO
 
 parseT : String -> Result Error Type
 parseT = run typ
@@ -1405,8 +1473,8 @@ parseT = run typ
 -- Code from old parser
 --------------------------------------------------------------------------------
 
-(prelude, initK) =
-  freshenClean 1 <| U.fromOkay "parse prelude" <| parseE_ identity Prelude.src
+(prelude, initK) = (withInfo (exp_ <| EVar "" "") dummyPos dummyPos, 0)
+  --freshenClean 1 <| U.fromOkay "parse prelude" <| parseE_ identity Prelude.src
 
 preludeIds = allIds prelude
 
