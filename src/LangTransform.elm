@@ -13,8 +13,7 @@ import String
 import Lang exposing (..)
 import LangTools exposing (..)
 import LangUnparser exposing (..)
-import LangParser2
-import OurParser2
+import FastParser exposing (freshen)
 import Utils
 
 
@@ -23,7 +22,7 @@ cleanCode exp =
   exp
   |> simplify
   |> removeExtraPostfixes ["_orig", "'"]
-  |> LangParser2.freshen
+  |> freshen
 
 
 -- Rename e.g. `x_orig_orig_orig` to `x_orig` (presuming there
@@ -330,7 +329,7 @@ changeRenamedVarsToOuter exp =
 
 
 changeRenamedVarsToOuter_ renamings exp =
-  let wrap e__ = OurParser2.WithInfo (Exp_ e__ exp.val.eid) exp.start exp.end in
+  let wrap e__ = WithInfo (Exp_ e__ exp.val.eid) exp.start exp.end in
   let recurse = changeRenamedVarsToOuter_ renamings in
   let e__New =
     let e__ = exp.val.e__ in

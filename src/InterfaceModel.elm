@@ -11,8 +11,6 @@ import ExamplesGenerated as Examples
 import LangUnparser exposing (unparse)
 import Ace
 import Either exposing (Either(..))
-import LangParser2 as Parser
-
 
 import Dict exposing (Dict)
 import Set exposing (Set)

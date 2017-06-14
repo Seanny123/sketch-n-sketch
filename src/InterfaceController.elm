@@ -34,7 +34,7 @@ module InterfaceController exposing
 import Lang exposing (..) --For access to what makes up the Vals
 import Types
 import Ace
-import LangParser2 exposing (parseE, freshen)
+import FastParser exposing (parseE)
 import LangUnparser exposing (unparse)
 import LangTools
 import LangTransform
@@ -157,8 +157,9 @@ runAndResolve model exp =
 
 runWithErrorHandling model exp onOk =
   let result =
-    -- runWithErrorHandling is called after synthesis. Recompute line numbers.
-    let reparsedResult = unparse exp |> parseE |> discardErrorAnnotations in
+    -- runWithErrorHandling is called after synthesis. Recompute line numbediscardErrorAnnotationsrs.
+    -- TODO RESULTERROR
+    let reparsedResult = unparse exp |> parseE |> (Result.mapError toString) in
     reparsedResult
     |> Result.andThen (\reparsed ->
       runAndResolve model reparsed
@@ -400,7 +401,8 @@ onMouseUp old =
 tryRun : Model -> Result (String, Maybe Ace.Annotation) Model
 tryRun old =
   case parseE old.code of
-    Err (err, annot) -> Err (err, Just annot)
+    -- TODO RESULTERROR
+    Err err -> Err (toString err, Nothing)
     Ok e ->
       let result =
         -- let aceTypeInfo = Types.typecheck e in
@@ -732,8 +734,9 @@ maybeRunAutoSynthesis m e =
 
 msgCleanCode = Msg "Clean Code" <| \old ->
   case parseE old.code of
-    Err (err, _) ->
-      { old | caption = Just (LangError ("PARSE ERROR!\n" ++ err)) }
+    -- TODO RESULTERROR
+    Err err ->
+      { old | caption = Just (LangError ("PARSE ERROR!\n" ++ toString err)) }
     Ok reparsed ->
       let cleanedExp = LangTransform.cleanCode reparsed in
       let code_ = unparse cleanedExp in

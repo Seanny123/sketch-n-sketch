@@ -12,7 +12,7 @@ module LangTools exposing (..)
 
 import Eval
 import Lang exposing (..)
-import LangParser2 as Parser
+import FastParser as Parser
 import Utils
 import LangUnparser exposing (unparseWithIds)
 import Types
